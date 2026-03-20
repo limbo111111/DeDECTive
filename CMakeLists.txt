@@ -7,12 +7,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(PkgConfig REQUIRED)
-find_package(OpenGL REQUIRED)
 
 pkg_check_modules(HACKRF REQUIRED IMPORTED_TARGET libhackrf)
-pkg_check_modules(IMGUI REQUIRED IMPORTED_TARGET imgui)
-pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse-simple)
+
+option(BUILD_GUI "Build the GUI frontend (requires imgui, SDL2, OpenGL)" ON)
+
+if(BUILD_GUI)
+    find_package(OpenGL REQUIRED)
+    pkg_check_modules(IMGUI REQUIRED IMPORTED_TARGET imgui)
+    pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+endif()
 
 add_library(dedective_core
     src/hackrf_source.cpp
@@ -42,6 +47,8 @@ target_include_directories(dedective PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
+if(BUILD_GUI)
+
 add_executable(dedective_gui
     src/gui_main.cpp
     /usr/share/doc/libimgui-dev/examples/backends/imgui_impl_sdl.cpp
@@ -60,3 +67,5 @@ target_link_libraries(dedective_gui PRIVATE
     PkgConfig::SDL2
     OpenGL::GL
 )
+
+endif() # BUILD_GUI

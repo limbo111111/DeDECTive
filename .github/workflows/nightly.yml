@@ -1,0 +1,125 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC daily
+  workflow_dispatch:        # manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  # ── x86_64 build (CLI + GUI) ───────────────────────────────────────────────
+  build-x86_64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libhackrf-dev libpulse-dev \
+            libsdl2-dev libimgui-dev libgl-dev
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      - name: Strip & package
+        run: |
+          strip build/dedective build/dedective_gui
+          tar czf DeDECTive-linux-x86_64.tar.gz \
+            -C build dedective dedective_gui \
+            --transform='s,^,DeDECTive/'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: DeDECTive-linux-x86_64.tar.gz
+
+  # ── aarch64 cross-compile (CLI only — no GUI display on cross) ─────────────
+  build-aarch64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo dpkg --add-architecture arm64
+          # Add arm64 package sources
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            crossbuild-essential-arm64 cmake pkg-config \
+            libhackrf-dev:arm64 libpulse-dev:arm64
+
+      - name: Build CLI (aarch64)
+        run: |
+          cat > arm64-toolchain.cmake << 'EOF'
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR aarch64)
+          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
+          set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
+          set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+          set(ENV{PKG_CONFIG_PATH} "/usr/lib/aarch64-linux-gnu/pkgconfig")
+          set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/aarch64-linux-gnu/pkgconfig")
+          EOF
+          cmake -S . -B build-arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=arm64-toolchain.cmake \
+            -DBUILD_GUI=OFF
+          cmake --build build-arm64 -j$(nproc) --target dedective
+
+      - name: Strip & package
+        run: |
+          aarch64-linux-gnu-strip build-arm64/dedective
+          tar czf DeDECTive-linux-aarch64.tar.gz \
+            -C build-arm64 dedective \
+            --transform='s,^,DeDECTive/'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-aarch64
+          path: DeDECTive-linux-aarch64.tar.gz
+
+  # ── Create/update nightly release ──────────────────────────────────────────
+  release:
+    needs: [build-x86_64, build-aarch64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete old nightly tag/release if it exists
+          gh release delete nightly --yes 2>/dev/null || true
+          git push origin :refs/tags/nightly 2>/dev/null || true
+
+          DATE=$(date -u +%Y-%m-%d)
+          gh release create nightly \
+            --title "Nightly Build ($DATE)" \
+            --notes "Automated nightly build from \`main\` branch.
+
+          **Downloads:**
+          - \`DeDECTive-linux-x86_64.tar.gz\` — CLI + GUI (x86_64)
+          - \`DeDECTive-linux-aarch64.tar.gz\` — CLI only (aarch64/arm64)
+
+          Built from commit: ${{ github.sha }}" \
+            --prerelease \
+            artifacts/linux-x86_64/DeDECTive-linux-x86_64.tar.gz \
+            artifacts/linux-aarch64/DeDECTive-linux-aarch64.tar.gz
