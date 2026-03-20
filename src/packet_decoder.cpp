@@ -293,6 +293,21 @@ void PacketDecoder::process_packet(const ReceivedPacket& pkt) noexcept {
     if (ps.active) {
         uint64_t seq_diff = (pkt.rx_seq - ps.rx_seq) & 0x1F;
 
+        // Fill missed frames with G.721 zero-input continuation.
+        // Without this, each missed frame is a hard silence gap; feeding
+        // zero nibbles keeps the adaptive predictor smooth and produces
+        // comfort noise that bridges the gap naturally.
+        if (seq_diff > 1 && seq_diff <= 8 &&
+            ps.qt_rcvd && ps.voice_present && on_voice_) {
+            for (uint64_t gap = 0; gap < seq_diff - 1; ++gap) {
+                int16_t pcm[80];
+                for (int i = 0; i < 80; ++i)
+                    pcm[i] = static_cast<int16_t>(
+                        g721_decoder(0, AUDIO_ENCODING_LINEAR, &ps.g721_state));
+                on_voice_(rx_id, pcm, 80);
+            }
+        }
+
         if (pkt.type == PartType::RFP) {
             ps.frame_number = (ps.frame_number + (uint8_t)seq_diff) & 0x0F;
             // Propagate frame number to paired PP if present

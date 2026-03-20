@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -54,6 +55,12 @@ struct NarrowbandContext {
     std::mutex                       mutex;
     PartInfo                         parts[MAX_PARTS];
     int                              part_count = 0;
+
+    // Voice mixing: combine RFP + PP into one frame so the audio ring
+    // buffer isn't filled at 2× the drain rate.  Accessed only from
+    // the HackRF callback thread — no lock needed.
+    int16_t  mix_frame[80] = {};
+    int      mix_first_rx_id = -1;   // -1 = empty
 };
 
 struct CaptureController {
@@ -120,9 +127,31 @@ struct CaptureController {
                 for (int i = 0; i < count; ++i)
                     nb.parts[i] = parts[i];
             },
-            // on_voice: send PCM to audio
-            [this](int /*rx_id*/, const int16_t* pcm, size_t count) {
-                audio.write_samples(pcm, count);
+            // on_voice: mix RFP + PP into one frame before writing to audio.
+            // Without mixing, both sides each produce 80 samples per 10 ms
+            // frame, filling the 8 kHz ring buffer at 2× the drain rate.
+            [this](int rx_id, const int16_t* pcm, size_t count) {
+                if (count != 80) { audio.write_samples(pcm, count); return; }
+
+                if (nb.mix_first_rx_id < 0) {
+                    // First contributor — store
+                    std::memcpy(nb.mix_frame, pcm, 80 * sizeof(int16_t));
+                    nb.mix_first_rx_id = rx_id;
+                } else if (rx_id != nb.mix_first_rx_id) {
+                    // Second contributor (other part) — mix and flush
+                    for (int i = 0; i < 80; ++i) {
+                        int32_t m = static_cast<int32_t>(nb.mix_frame[i])
+                                  + static_cast<int32_t>(pcm[i]);
+                        nb.mix_frame[i] = static_cast<int16_t>(
+                            std::clamp(m, (int32_t)-32768, (int32_t)32767));
+                    }
+                    audio.write_samples(nb.mix_frame, 80);
+                    nb.mix_first_rx_id = -1;
+                } else {
+                    // Same part again (other side has no voice) — flush old, store new
+                    audio.write_samples(nb.mix_frame, 80);
+                    std::memcpy(nb.mix_frame, pcm, 80 * sizeof(int16_t));
+                }
             }
         );
 
@@ -832,8 +861,8 @@ int main(int argc, char* argv[]) {
                               controller.audio.is_running() ? "playing" : "stopped");
         }
 
-        // Follow call — works across modes
-        if (is_active) {
+        // Follow call — narrowband only
+        if (is_narrowband) {
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Text("Call Following");

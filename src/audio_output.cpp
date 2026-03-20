@@ -71,6 +71,7 @@ void AudioOutput::set_volume(float v){ volume_ = std::clamp(v, 0.0f, 1.0f); }
 void AudioOutput::audio_loop() {
     constexpr size_t FRAME = 80;  // one DECT voice frame
     int16_t buf[FRAME];
+    int16_t last_sample = 0;      // for smooth fade on underrun
 
     while (running_.load(std::memory_order_relaxed)) {
         size_t rp = read_pos_.load(std::memory_order_relaxed);
@@ -78,8 +79,13 @@ void AudioOutput::audio_loop() {
         size_t avail = wp - rp;
 
         if (avail < FRAME) {
-            // Underrun — output silence to keep stream alive
-            std::memset(buf, 0, sizeof(buf));
+            // Underrun — fade from last sample to silence over the frame
+            // to avoid a hard discontinuity (click/pop).
+            for (size_t i = 0; i < FRAME; ++i) {
+                float fade = 1.0f - static_cast<float>(i) / static_cast<float>(FRAME);
+                buf[i] = static_cast<int16_t>(last_sample * fade);
+            }
+            last_sample = 0;
         } else {
             float vol = muted_.load(std::memory_order_relaxed)
                       ? 0.0f
@@ -89,6 +95,7 @@ void AudioOutput::audio_loop() {
                 buf[i] = static_cast<int16_t>(std::clamp(
                     static_cast<int32_t>(s * vol), -32768, 32767));
             }
+            last_sample = buf[FRAME - 1];
             read_pos_.store(rp + FRAME, std::memory_order_release);
         }
 

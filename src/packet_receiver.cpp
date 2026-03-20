@@ -123,13 +123,13 @@ int PacketReceiver::register_part() noexcept {
     }
 }
 
-// Return the rx_id of any part that has not been heard for >4 frames, else -1.
+// Return the rx_id of any part that has not been heard for >16 frames, else -1.
 int PacketReceiver::check_part_activity() noexcept {
     if (!part_activity_) return -1;
     uint32_t part_mask = 1;
     for (int j = 0; j < MAX_PARTS; ++j, part_mask <<= 1) {
         if ((part_activity_ & part_mask) &&
-            (inc_smpl_cnt_ - part_time_[j] > 4 * INTER_FRAME_TIME)) {
+            (inc_smpl_cnt_ - part_time_[j] > 16 * INTER_FRAME_TIME)) {
             part_activity_ &= ~part_mask;
             return j;
         }
