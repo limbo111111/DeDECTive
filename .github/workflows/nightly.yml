@@ -23,9 +23,20 @@ jobs:
             libhackrf-dev libpulse-dev \
             libsdl2-dev libimgui-dev libgl-dev
 
+      - name: Fetch imgui backends
+        run: |
+          # Ubuntu 24.04's libimgui-dev doesn't ship backend .cpp files;
+          # grab them from the matching upstream release.
+          IMGUI_VER=$(pkg-config --modversion imgui)
+          echo "System imgui version: $IMGUI_VER"
+          git clone --depth=1 --branch "v${IMGUI_VER}" \
+            https://github.com/ocornut/imgui.git /tmp/imgui || \
+          git clone --depth=1 https://github.com/ocornut/imgui.git /tmp/imgui
+
       - name: Build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DIMGUI_BACKENDS_DIR=/tmp/imgui/backends
           cmake --build build -j$(nproc)
 
       - name: Strip & package
@@ -40,7 +51,7 @@ jobs:
           name: linux-x86_64
           path: DeDECTive-linux-x86_64.tar.gz
 
-  # ── aarch64 cross-compile (CLI only — no GUI display on cross) ─────────────
+  # ── aarch64 cross-compile (CLI only — no GUI on cross) ─────────────────────
   build-aarch64:
     runs-on: ubuntu-24.04
     steps:
@@ -49,16 +60,36 @@ jobs:
       - name: Install cross-compilation toolchain
         run: |
           sudo dpkg --add-architecture arm64
-          # Add arm64 package sources
-          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list.d/*.list 2>/dev/null || true
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+
+          # Replace DEB822-format sources to add arm64 architecture
+          # Ubuntu 24.04 uses /etc/apt/sources.list.d/ubuntu.sources (DEB822)
+          # We need to pin existing sources to amd64 and add arm64 from ports
+          sudo sed -i 's/^Architectures:.*/Architectures: amd64/' \
+            /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          # If no Architectures line exists, add one after each Types line
+          if ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null; then
+            sudo sed -i '/^Types:/a Architectures: amd64' \
+              /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          fi
+
+          # Add arm64 ports repository
+          cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.sources
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: noble noble-updates
+          Components: main restricted universe multiverse
+          Architectures: arm64
+          EOF
+
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             crossbuild-essential-arm64 cmake pkg-config \
             libhackrf-dev:arm64 libpulse-dev:arm64
 
       - name: Build CLI (aarch64)
+        env:
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig
         run: |
           cat > arm64-toolchain.cmake << 'EOF'
           set(CMAKE_SYSTEM_NAME Linux)
@@ -70,8 +101,6 @@ jobs:
           set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
           set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
           set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-          set(ENV{PKG_CONFIG_PATH} "/usr/lib/aarch64-linux-gnu/pkgconfig")
-          set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/aarch64-linux-gnu/pkgconfig")
           EOF
           cmake -S . -B build-arm64 \
             -DCMAKE_BUILD_TYPE=Release \

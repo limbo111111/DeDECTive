@@ -9,7 +9,11 @@
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
+#if __has_include("imgui_impl_sdl2.h")
+#include "imgui_impl_sdl2.h"
+#else
 #include "imgui_impl_sdl.h"
+#endif
 
 #include <SDL.h>
 #include <SDL_opengl.h>
