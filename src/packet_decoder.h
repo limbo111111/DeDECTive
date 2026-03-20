@@ -15,6 +15,7 @@ struct PartInfo {
     bool     voice_present;
     bool     part_id_valid;
     bool     qt_synced;
+    uint8_t  slot;            // DECT timeslot (0–23)
 
     uint64_t packets_ok;      // A-field CRC passes
     uint64_t packets_bad_crc; // A-field CRC failures
@@ -82,6 +83,7 @@ private:
         bool     qt_rcvd        = false;
         bool     log_dirty      = false;
         uint8_t  frame_number   = 0;
+        uint8_t  slot           = 0;
         uint64_t rx_seq         = 0;
         uint8_t  part_id[5]     = {};
         PartType type           = PartType::RFP;

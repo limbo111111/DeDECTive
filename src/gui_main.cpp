@@ -34,12 +34,11 @@ struct GuiState {
     float fft_max_db = 40.0f;
     float waterfall_min_db = 4.0f;
     float waterfall_max_db = 35.0f;
-    int   audio_channel = -1;  // -1 = auto (wideband only)
     bool  audio_enabled = true;
     float audio_volume = 0.8f;
     bool  audio_muted = false;
-    int   tune_channel = -1;   // channel to tune to in narrowband mode
     bool  dc_block = true;     // DC offset correction enabled
+    bool  follow_call = false; // auto-retune when call moves channels
 };
 
 // Narrowband state: single-channel decode pipeline
@@ -164,12 +163,9 @@ struct CaptureController {
     void start_audio() {
         if (!audio.is_running())
             audio.start();
-        if (mode == CaptureMode::WIDEBAND)
-            monitor.set_audio_output(&audio);
     }
 
     void stop() {
-        monitor.set_audio_output(nullptr);
         if (mode != CaptureMode::IDLE) {
             hackrf.stop();
         }
@@ -468,11 +464,12 @@ void draw_narrowband_panel(CaptureController& controller, const ImVec2& size) {
     ImGui::Text("Parts detected: %d", part_count);
     ImGui::Spacing();
 
-    if (part_count > 0 && ImGui::BeginTable("nb_parts", 9,
+    if (part_count > 0 && ImGui::BeginTable("nb_parts", 10,
             ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
             ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
         ImGui::TableSetupColumn("Type");
         ImGui::TableSetupColumn("Part ID");
+        ImGui::TableSetupColumn("Slot");
         ImGui::TableSetupColumn("Voice");
         ImGui::TableSetupColumn("Qt Sync");
         ImGui::TableSetupColumn("Decoded");
@@ -492,36 +489,38 @@ void draw_narrowband_panel(CaptureController& controller, const ImVec2& size) {
             ImGui::TableSetColumnIndex(1);
             ImGui::Text("%s", p.part_id_valid ? p.part_id_hex().c_str() : "---");
             ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%d", p.slot);
+            ImGui::TableSetColumnIndex(3);
             if (p.voice_present)
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "YES");
             else
                 ImGui::Text("no");
-            ImGui::TableSetColumnIndex(3);
+            ImGui::TableSetColumnIndex(4);
             if (p.qt_synced)
                 ImGui::Text("YES");
             else
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "no");
-            ImGui::TableSetColumnIndex(4);
+            ImGui::TableSetColumnIndex(5);
             if (p.voice_frames_ok > 0)
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%llu",
                                    static_cast<unsigned long long>(p.voice_frames_ok));
             else
                 ImGui::Text("0");
-            ImGui::TableSetColumnIndex(5);
+            ImGui::TableSetColumnIndex(6);
             if (p.voice_xcrc_fail > 0)
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "%llu",
                                    static_cast<unsigned long long>(p.voice_xcrc_fail));
             else
                 ImGui::Text("0");
-            ImGui::TableSetColumnIndex(6);
+            ImGui::TableSetColumnIndex(7);
             if (p.voice_skipped > 0)
                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%llu",
                                    static_cast<unsigned long long>(p.voice_skipped));
             else
                 ImGui::Text("0");
-            ImGui::TableSetColumnIndex(7);
-            ImGui::Text("%llu", static_cast<unsigned long long>(p.packets_ok));
             ImGui::TableSetColumnIndex(8);
+            ImGui::Text("%llu", static_cast<unsigned long long>(p.packets_ok));
+            ImGui::TableSetColumnIndex(9);
             if (p.packets_bad_crc > 0)
                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%llu",
                                    static_cast<unsigned long long>(p.packets_bad_crc));
@@ -647,6 +646,12 @@ int main(int argc, char* argv[]) {
     auto auto_deadline = std::chrono::steady_clock::time_point{};
     bool done = false;
 
+    // Follow-call state
+    using clock = std::chrono::steady_clock;
+    clock::time_point follow_voice_lost_at{};
+    bool follow_had_voice = false;
+    static constexpr auto FOLLOW_TIMEOUT = std::chrono::seconds(2);
+
     while (!done) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -674,6 +679,50 @@ int main(int argc, char* argv[]) {
             controller.monitor.update_visuals();
         }
         const WidebandSnapshot snapshot = controller.monitor.snapshot();
+
+        // ── Follow-call logic ────────────────────────────────────────
+        if (gui_state.follow_call) {
+            auto now = clock::now();
+
+            if (is_narrowband) {
+                // Check if any part still has voice
+                bool any_voice = false;
+                {
+                    std::lock_guard<std::mutex> lock(controller.nb.mutex);
+                    for (int i = 0; i < controller.nb.part_count; ++i)
+                        if (controller.nb.parts[i].voice_present) { any_voice = true; break; }
+                }
+                if (any_voice) {
+                    follow_had_voice = true;
+                    follow_voice_lost_at = {};
+                } else if (follow_had_voice) {
+                    // Voice was present but now gone — start timeout
+                    if (follow_voice_lost_at == clock::time_point{})
+                        follow_voice_lost_at = now;
+                    else if (now - follow_voice_lost_at > FOLLOW_TIMEOUT) {
+                        // Timed out — return to wideband to scan for the call
+                        controller.stop();
+                        controller.start_wideband();
+                        follow_had_voice = false;
+                        follow_voice_lost_at = {};
+                    }
+                }
+            } else if (is_wideband) {
+                // Auto-tune to the first channel showing voice
+                for (size_t i = 0; i < snapshot.channels.size(); ++i) {
+                    if (snapshot.channels[i].voice_detected) {
+                        controller.stop();
+                        if (controller.start_narrowband(static_cast<int>(i))) {
+                            if (gui_state.audio_enabled)
+                                controller.start_audio();
+                            follow_had_voice = false;
+                            follow_voice_lost_at = {};
+                        }
+                        break;
+                    }
+                }
+            }
+        }
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
@@ -728,10 +777,7 @@ int main(int argc, char* argv[]) {
 
         if (!is_active) {
             if (ImGui::Button("Start wideband scan", ImVec2(-1.0f, 0.0f))) {
-                if (controller.start_wideband()) {
-                    if (gui_state.audio_enabled)
-                        controller.start_audio();
-                }
+                controller.start_wideband();
             }
         } else {
             if (ImGui::Button("Stop capture", ImVec2(-1.0f, 0.0f))) {
@@ -759,44 +805,45 @@ int main(int argc, char* argv[]) {
             ImGui::TextWrapped("%s", controller.last_error.c_str());
         }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Text("Audio Output");
-        ImGui::Separator();
+        // Audio controls — only relevant in narrowband mode
+        if (is_narrowband) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("Audio Output");
+            ImGui::Separator();
 
-        if (ImGui::Checkbox("Enable audio", &gui_state.audio_enabled)) {
-            if (gui_state.audio_enabled && is_active) {
-                controller.start_audio();
-            } else if (!gui_state.audio_enabled) {
-                if (is_wideband)
-                    controller.monitor.set_audio_output(nullptr);
-                controller.audio.stop();
+            if (ImGui::Checkbox("Enable audio", &gui_state.audio_enabled)) {
+                if (gui_state.audio_enabled) {
+                    controller.start_audio();
+                } else {
+                    controller.audio.stop();
+                }
+            }
+
+            if (ImGui::Checkbox("Mute", &gui_state.audio_muted)) {
+                controller.audio.set_muted(gui_state.audio_muted);
+            }
+
+            if (ImGui::SliderFloat("Volume", &gui_state.audio_volume, 0.0f, 1.0f, "%.2f")) {
+                controller.audio.set_volume(gui_state.audio_volume);
+            }
+
+            ImGui::BulletText("Audio: %s",
+                              controller.audio.is_running() ? "playing" : "stopped");
+        }
+
+        // Follow call — works across modes
+        if (is_active) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("Call Following");
+            ImGui::Separator();
+            ImGui::Checkbox("Follow call", &gui_state.follow_call);
+            if (gui_state.follow_call) {
+                ImGui::TextWrapped("Auto-retunes when the call "
+                                   "moves to a different channel.");
             }
         }
-
-        if (ImGui::Checkbox("Mute", &gui_state.audio_muted)) {
-            controller.audio.set_muted(gui_state.audio_muted);
-        }
-
-        if (ImGui::SliderFloat("Volume", &gui_state.audio_volume, 0.0f, 1.0f, "%.2f")) {
-            controller.audio.set_volume(gui_state.audio_volume);
-        }
-
-        // Channel selector only relevant in wideband mode
-        if (is_wideband) {
-            const char* ch_labels[] = {
-                "Auto", "Ch 0", "Ch 1", "Ch 2", "Ch 3", "Ch 4",
-                "Ch 5", "Ch 6", "Ch 7", "Ch 8", "Ch 9"
-            };
-            int ch_combo = gui_state.audio_channel + 1;
-            if (ImGui::Combo("Listen Ch", &ch_combo, ch_labels, 11)) {
-                gui_state.audio_channel = ch_combo - 1;
-                controller.monitor.set_audio_channel(gui_state.audio_channel);
-            }
-        }
-
-        ImGui::BulletText("Audio: %s",
-                          controller.audio.is_running() ? "playing" : "stopped");
 
         ImGui::EndChild();
 

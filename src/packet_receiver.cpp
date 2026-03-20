@@ -25,6 +25,7 @@ PacketReceiver::PacketReceiver(PacketCallback on_packet,
     memset(smpl_buf_,    0, sizeof(smpl_buf_));
     memset(part_time_,   0, sizeof(part_time_));
     memset(part_seq_,    0, sizeof(part_seq_));
+    memset(part_slot_,   0, sizeof(part_slot_));
     memset(&cur_packet_, 0, sizeof(cur_packet_));
 }
 
@@ -33,6 +34,7 @@ void PacketReceiver::reset() noexcept {
     memset(smpl_buf_,    0, sizeof(smpl_buf_));
     memset(part_time_,   0, sizeof(part_time_));
     memset(part_seq_,    0, sizeof(part_seq_));
+    memset(part_slot_,   0, sizeof(part_slot_));
     memset(&cur_packet_, 0, sizeof(cur_packet_));
     rx_bits_idx_   = 0;
     smpl_buf_idx_  = 0;
@@ -73,6 +75,10 @@ int PacketReceiver::find_best_smpl_point() noexcept {
 
 // Assign an incoming burst to an existing part (by timing) or allocate a new one.
 int PacketReceiver::register_part() noexcept {
+    auto compute_slot = [this]() -> uint8_t {
+        return static_cast<uint8_t>((inc_smpl_cnt_ % INTER_FRAME_TIME) / INTER_SLOT_TIME);
+    };
+
     if (part_activity_) {
         uint32_t part_mask = 1;
         for (int j = 0; j < MAX_PARTS; ++j, part_mask <<= 1) {
@@ -91,6 +97,7 @@ int PacketReceiver::register_part() noexcept {
 
             part_time_[j]  = inc_smpl_cnt_;
             part_seq_[j]   = (part_seq_[j] + seq) & 0x1F;
+            part_slot_[j]  = compute_slot();
             return j;
         }
 
@@ -101,6 +108,7 @@ int PacketReceiver::register_part() noexcept {
                 part_activity_ |= part_mask;
                 part_time_[j]   = inc_smpl_cnt_;
                 part_seq_[j]    = 0;
+                part_slot_[j]   = compute_slot();
                 return j;
             }
         }
@@ -110,6 +118,7 @@ int PacketReceiver::register_part() noexcept {
         part_activity_ = 1;
         part_time_[0]  = inc_smpl_cnt_;
         part_seq_[0]   = 0;
+        part_slot_[0]  = compute_slot();
         return 0;
     }
 }
@@ -173,6 +182,7 @@ void PacketReceiver::process_sample(float phase_val) noexcept {
             cur_packet_.rx_id       = cur_part_rx_id_;
             cur_packet_.rx_seq      = part_seq_[cur_part_rx_id_];
             cur_packet_.type        = cur_part_type_;
+            cur_packet_.rx_slot     = part_slot_[cur_part_rx_id_];
             sync_state_             = SyncState::PostWait;
         }
         break;

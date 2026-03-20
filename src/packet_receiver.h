@@ -31,6 +31,7 @@ struct ReceivedPacket {
     int      rx_id;                  // internal part index [0, MAX_PARTS)
     uint32_t rx_seq;                 // frame sequence counter (mod 32)
     PartType type;
+    uint8_t  rx_slot;                // slot within frame (0–23)
 };
 
 // Callback invoked for each received packet
@@ -88,6 +89,7 @@ private:
     uint32_t  part_activity_;      // bitmask of active parts
     uint64_t  part_time_[MAX_PARTS];
     uint32_t  part_seq_[MAX_PARTS];
+    uint8_t   part_slot_[MAX_PARTS]; // slot within frame (0–23)
     int       cur_part_rx_id_;
 
     // ── packet assembly ───────────────────────────────────────────────────

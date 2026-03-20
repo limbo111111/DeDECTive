@@ -271,6 +271,7 @@ void PacketDecoder::publish_update() noexcept {
         pi.voice_present    = ps.voice_present;
         pi.part_id_valid    = ps.part_id_rcvd;
         pi.qt_synced        = ps.qt_rcvd;
+        pi.slot             = ps.slot;
         pi.packets_ok       = ps.packet_cnt;
         pi.packets_bad_crc  = ps.bad_crc_cnt;
         pi.voice_frames_ok  = ps.voice_frames_ok;
@@ -306,12 +307,14 @@ void PacketDecoder::process_packet(const ReceivedPacket& pkt) noexcept {
         }
 
         ps.rx_seq = pkt.rx_seq;
+        ps.slot   = pkt.rx_slot;
         ++ps.packet_cnt;
     } else {
         // New part
         ps.active        = true;
         ps.type          = pkt.type;
         ps.frame_number  = 0;
+        ps.slot          = pkt.rx_slot;
         ps.rx_seq        = pkt.rx_seq;
         ps.voice_present = false;
         ps.packet_cnt    = 0;
