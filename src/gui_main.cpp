@@ -4,6 +4,7 @@
 #include "packet_decoder.h"
 #include "phase_diff.h"
 #include "audio_output.h"
+#include "dc_blocker.h"
 #include "dect_channels.h"
 
 #include "imgui.h"
@@ -38,11 +39,13 @@ struct GuiState {
     float audio_volume = 0.8f;
     bool  audio_muted = false;
     int   tune_channel = -1;   // channel to tune to in narrowband mode
+    bool  dc_block = true;     // DC offset correction enabled
 };
 
 // Narrowband state: single-channel decode pipeline
 struct NarrowbandContext {
     PhaseDiff                        phase_diff;
+    DCBlocker                        dc_blocker;
     std::unique_ptr<PacketReceiver>  receiver;
     std::unique_ptr<PacketDecoder>   decoder;
     int                              channel_index = -1;
@@ -63,6 +66,7 @@ struct CaptureController {
     uint32_t         lna_gain = 32;
     uint32_t         vga_gain = 20;
     bool             amp_enable = false;
+    bool             dc_block_enabled = true;
     std::string      last_error;
 
     // Narrowband state
@@ -107,6 +111,7 @@ struct CaptureController {
         nb.packets_seen  = 0;
         nb.part_count    = 0;
         nb.phase_diff    = PhaseDiff();
+        nb.dc_blocker.reset();
 
         nb.decoder = std::make_unique<PacketDecoder>(
             // on_update: snapshot parts for GUI
@@ -142,7 +147,9 @@ struct CaptureController {
 
         if (!hackrf.start([this](const std::complex<float>* samples, size_t n) {
                 for (size_t i = 0; i < n; ++i) {
-                    float phase = nb.phase_diff.process(samples[i]);
+                    auto s = dc_block_enabled
+                        ? nb.dc_blocker.process(samples[i]) : samples[i];
+                    float phase = nb.phase_diff.process(s);
                     nb.receiver->process_sample(phase);
                 }
             })) {
@@ -710,6 +717,11 @@ int main(int argc, char* argv[]) {
         }
         ImGui::Checkbox("HackRF amp", &controller.amp_enable);
         ImGui::EndDisabled();
+
+        if (ImGui::Checkbox("DC correction", &gui_state.dc_block)) {
+            controller.dc_block_enabled = gui_state.dc_block;
+            controller.monitor.set_dc_block(gui_state.dc_block);
+        }
 
         if (!is_active) {
             if (ImGui::Button("Start wideband scan", ImVec2(-1.0f, 0.0f))) {

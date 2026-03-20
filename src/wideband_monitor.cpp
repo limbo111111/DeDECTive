@@ -117,8 +117,25 @@ WidebandMonitor::WidebandMonitor()
     }
 }
 
+void WidebandMonitor::set_dc_block(bool enabled) {
+    dc_block_enabled_ = enabled;
+    if (!enabled) dc_blocker_.reset();
+}
+
+bool WidebandMonitor::dc_block_enabled() const {
+    return dc_block_enabled_;
+}
+
 void WidebandMonitor::ingest(const std::complex<float>* samples, size_t n) {
     if (n == 0) return;
+
+    // Apply DC blocker if enabled (filter into reusable scratch buffer)
+    if (dc_block_enabled_) {
+        if (dc_buf_.size() < n) dc_buf_.resize(n);
+        for (size_t i = 0; i < n; ++i)
+            dc_buf_[i] = dc_blocker_.process(samples[i]);
+        samples = dc_buf_.data();
+    }
 
     {
         std::lock_guard<std::mutex> lock(ring_mutex_);

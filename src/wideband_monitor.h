@@ -5,6 +5,7 @@
 #include "packet_receiver.h"
 #include "phase_diff.h"
 #include "audio_output.h"
+#include "dc_blocker.h"
 
 #include <array>
 #include <complex>
@@ -64,6 +65,10 @@ public:
     void set_audio_channel(int channel_index);  // -1 = auto (first voice channel)
     int  audio_channel() const;
 
+    // DC offset correction
+    void set_dc_block(bool enabled);
+    bool dc_block_enabled() const;
+
 private:
     struct ChannelDecoderSnapshot {
         bool     voice_detected = false;
@@ -107,6 +112,11 @@ private:
     AudioOutput* audio_out_ = nullptr;
     int audio_channel_ = -1;  // -1 = auto
     mutable std::mutex audio_mutex_;
+
+    // DC offset correction
+    DCBlocker dc_blocker_;
+    bool dc_block_enabled_ = true;
+    std::vector<std::complex<float>> dc_buf_;  // reusable scratch for filtered samples
 
     bool snapshot_latest_block(std::vector<std::complex<float>>& out, size_t& buffered_samples);
     void snapshot_channel_state(
