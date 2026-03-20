@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake pkg-config \
-            libhackrf-dev libpulse-dev \
+            libhackrf-dev libpulse-dev libusb-1.0-0-dev \
             libsdl2-dev libimgui-dev libgl-dev
 
       - name: Fetch imgui backends
@@ -61,22 +61,23 @@ jobs:
         run: |
           sudo dpkg --add-architecture arm64
 
-          # Pin existing sources to amd64 only (DEB822 format on 24.04)
+          # Pin existing sources to amd64 only
           sudo sed -i '/^Types:/a Architectures: amd64' \
             /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
 
           # Add arm64 ports repository
-          sudo tee /etc/apt/sources.list.d/arm64-ports.list <<'EOF'
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-updates main restricted universe multiverse
-          EOF
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64-ports.list
 
           sudo apt-get update
+
+          # Install cross toolchain first
           sudo apt-get install -y --no-install-recommends \
-            crossbuild-essential-arm64 cmake pkg-config \
-            libhackrf-dev:arm64 libpulse-dev:arm64 \
-            libusb-1.0-0-dev:arm64 libglib2.0-dev:arm64 || \
-          sudo apt-get install -y --fix-broken
+            crossbuild-essential-arm64 cmake pkg-config
+
+          # Then arm64 libraries
+          sudo apt-get install -y --no-install-recommends \
+            libhackrf-dev:arm64 libpulse-dev:arm64 libusb-1.0-0-dev:arm64
 
       - name: Build CLI (aarch64)
         run: |
