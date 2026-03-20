@@ -387,10 +387,13 @@ void draw_channel_details_panel(const WidebandSnapshot& snapshot,
             ImGui::TableSetColumnIndex(4);
             ImGui::Text("%d", channel.active_parts);
             ImGui::TableSetColumnIndex(5);
-            ImGui::Text("%s", channel.voice_detected ? "YES" : "no");
+            if (channel.voice_detected)
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "YES");
+            else
+                ImGui::Text("no");
             ImGui::TableSetColumnIndex(6);
             if (channel.qt_synced)
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "YES");
+                ImGui::Text("YES");
             else if (channel.active_parts > 0)
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "no");
             else
@@ -495,7 +498,7 @@ void draw_narrowband_panel(CaptureController& controller, const ImVec2& size) {
                 ImGui::Text("no");
             ImGui::TableSetColumnIndex(3);
             if (p.qt_synced)
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "YES");
+                ImGui::Text("YES");
             else
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "no");
             ImGui::TableSetColumnIndex(4);

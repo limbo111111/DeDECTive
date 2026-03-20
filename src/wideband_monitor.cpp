@@ -296,7 +296,7 @@ bool WidebandMonitor::update_visuals() {
         if (!have_history_) {
             smoothed_power_db_[i] = frame_power_db[i];
         } else {
-            smoothed_power_db_[i] = 0.75f * smoothed_power_db_[i] + 0.25f * frame_power_db[i];
+            smoothed_power_db_[i] = 0.85f * smoothed_power_db_[i] + 0.15f * frame_power_db[i];
         }
     }
     have_history_ = true;
@@ -306,7 +306,8 @@ bool WidebandMonitor::update_visuals() {
     std::nth_element(median_power.begin(), median_it, median_power.end());
     const float noise_floor_db = *median_it;
 
-    std::array<float, FFT_PLOT_BINS> fft_plot_db{};
+    // Compute raw FFT bins for this frame
+    std::array<float, FFT_PLOT_BINS> fft_plot_raw{};
     for (size_t col = 0; col < FFT_PLOT_BINS; ++col) {
         const size_t start = (col * FFT_SIZE) / FFT_PLOT_BINS;
         const size_t stop  = ((col + 1) * FFT_SIZE) / FFT_PLOT_BINS;
@@ -316,17 +317,26 @@ bool WidebandMonitor::update_visuals() {
             const size_t shifted_index = (bin + FFT_SIZE / 2) % FFT_SIZE;
             max_db = std::max(max_db, power_db(spectrum[shifted_index]));
         }
-        fft_plot_db[col] = max_db;
+        fft_plot_raw[col] = max_db;
     }
 
     {
         std::lock_guard<std::mutex> lock(visual_mutex_);
         visual_ready_ = true;
         noise_floor_db_ = noise_floor_db;
-        fft_plot_db_ = fft_plot_db;
 
+        // IIR smooth FFT display: fast attack (0.4), slow decay (0.15)
+        // This stabilises the trace without hiding transient signals.
+        for (size_t col = 0; col < FFT_PLOT_BINS; ++col) {
+            if (fft_plot_raw[col] > fft_plot_db_[col])
+                fft_plot_db_[col] = 0.6f * fft_plot_db_[col] + 0.4f * fft_plot_raw[col];
+            else
+                fft_plot_db_[col] = 0.85f * fft_plot_db_[col] + 0.15f * fft_plot_raw[col];
+        }
+
+        // Waterfall uses raw (un-smoothed) data so it stays crisp
         const size_t row_offset = waterfall_head_ * FFT_PLOT_BINS;
-        std::copy(fft_plot_db.begin(), fft_plot_db.end(),
+        std::copy(fft_plot_raw.begin(), fft_plot_raw.end(),
                   waterfall_history_.begin() + static_cast<std::ptrdiff_t>(row_offset));
         waterfall_head_ = (waterfall_head_ + 1) % WATERFALL_HISTORY;
         waterfall_rows_filled_ = std::min(waterfall_rows_filled_ + 1, WATERFALL_HISTORY);
@@ -344,8 +354,13 @@ bool WidebandMonitor::update_visuals() {
             channel_views_[i].voice_frames_ok = channel_state[i].voice_frames_ok;
             channel_views_[i].voice_xcrc_fail = channel_state[i].voice_xcrc_fail;
             channel_views_[i].voice_skipped = channel_state[i].voice_skipped;
-            channel_views_[i].active =
-                (delta_db >= 3.0f) || channel_state[i].voice_detected || channel_state[i].active_parts > 0;
+
+            // Hysteresis: activate at ≥3 dB above noise, deactivate below 1.5 dB
+            bool has_signal = channel_state[i].voice_detected || channel_state[i].active_parts > 0;
+            if (channel_views_[i].active)
+                channel_views_[i].active = (delta_db >= 1.5f) || has_signal;
+            else
+                channel_views_[i].active = (delta_db >= 3.0f) || has_signal;
         }
     }
 
