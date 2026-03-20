@@ -78,23 +78,12 @@ WidebandMonitor::WidebandMonitor()
     , visual_ready_(false)
     , waterfall_head_(0)
     , waterfall_rows_filled_(0)
-    , noise_floor_db_(0.0f) {
+    , noise_floor_db_(0.0f)
+    , channels_(&US_DECT_CHANNELS)
+    , center_freq_hz_(dect_center_freq(DectBand::US)) {
     fft_plot_db_.fill(-120.0f);
 
-    for (size_t i = 0; i < US_DECT_CHANNELS.size(); ++i) {
-        const float offset_hz =
-            static_cast<float>(static_cast<int64_t>(US_DECT_CHANNELS[i].freq_hz) -
-                               static_cast<int64_t>(WIDEBAND_CENTER_FREQ_HZ));
-        const float angle = -2.0f * PI_F * offset_hz / static_cast<float>(WIDEBAND_SAMPLE_RATE);
-
-        mixer_[i] = {1.0f, 0.0f};
-        mixer_step_[i] = {std::cos(angle), std::sin(angle)};
-        decim_accum_[i] = {};
-        decim_phase_[i] = 0;
-
-        channel_views_[i].channel_number = US_DECT_CHANNELS[i].number;
-        channel_views_[i].freq_hz = US_DECT_CHANNELS[i].freq_hz;
-
+    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
         decoders_[i] = std::make_unique<PacketDecoder>(
             [this, i](const PartInfo parts[], int count) {
                 on_channel_update(i, parts, count);
@@ -115,6 +104,50 @@ WidebandMonitor::WidebandMonitor()
                 decoders_[i]->notify_lost(rx_id);
             });
     }
+    configure_band();
+}
+
+void WidebandMonitor::configure_band() {
+    const auto& ch = *channels_;
+    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
+        const float offset_hz =
+            static_cast<float>(static_cast<int64_t>(ch[i].freq_hz) -
+                               static_cast<int64_t>(center_freq_hz_));
+        const float angle = -2.0f * PI_F * offset_hz / static_cast<float>(WIDEBAND_SAMPLE_RATE);
+
+        mixer_[i] = {1.0f, 0.0f};
+        mixer_step_[i] = {std::cos(angle), std::sin(angle)};
+        decim_accum_[i] = {};
+        decim_phase_[i] = 0;
+
+        channel_views_[i].channel_number = ch[i].number;
+        channel_views_[i].freq_hz = ch[i].freq_hz;
+    }
+}
+
+void WidebandMonitor::set_band(DectBand band) {
+    channels_      = &dect_channels(band);
+    center_freq_hz_ = dect_center_freq(band);
+    configure_band();
+
+    // Reset decoder/receiver state for all channels
+    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
+        receivers_[i]->reset();
+        for (int j = 0; j < MAX_PARTS; ++j)
+            decoders_[i]->notify_lost(j);
+        voice_detected_[i] = false;
+        active_parts_[i]   = 0;
+        packets_seen_[i]   = 0;
+        smoothed_power_db_[i] = 0.0f;
+        peak_delta_db_[i]     = 0.0f;
+        phase_diff_[i].reset();
+    }
+
+    have_history_ = false;
+    waterfall_head_ = 0;
+    waterfall_rows_filled_ = 0;
+    std::fill(waterfall_history_.begin(), waterfall_history_.end(), -120.0f);
+    fft_plot_db_.fill(-120.0f);
 }
 
 void WidebandMonitor::set_dc_block(bool enabled) {
@@ -161,7 +194,7 @@ void WidebandMonitor::ingest(const std::complex<float>* samples, size_t n) {
 }
 
 void WidebandMonitor::process_sample(std::complex<float> sample) noexcept {
-    for (size_t i = 0; i < US_DECT_CHANNELS.size(); ++i) {
+    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
         const std::complex<float> mixed = sample * mixer_[i];
         mixer_[i] *= mixer_step_[i];
         decim_accum_[i] += mixed;
@@ -201,9 +234,9 @@ bool WidebandMonitor::snapshot_latest_block(std::vector<std::complex<float>>& ou
 }
 
 void WidebandMonitor::snapshot_channel_state(
-    std::array<ChannelDecoderSnapshot, US_DECT_CHANNELS.size()>& out) const {
+    std::array<ChannelDecoderSnapshot, NUM_DECT_CHANNELS>& out) const {
     std::lock_guard<std::mutex> lock(status_mutex_);
-    for (size_t i = 0; i < US_DECT_CHANNELS.size(); ++i) {
+    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
         out[i].voice_detected   = voice_detected_[i];
         out[i].qt_synced        = channel_views_[i].qt_synced;
         out[i].active_parts     = active_parts_[i];
@@ -284,14 +317,14 @@ bool WidebandMonitor::update_visuals() {
 
     fft_inplace(spectrum);
 
-    std::array<ChannelDecoderSnapshot, US_DECT_CHANNELS.size()> channel_state{};
+    std::array<ChannelDecoderSnapshot, NUM_DECT_CHANNELS> channel_state{};
     snapshot_channel_state(channel_state);
 
-    std::array<float, US_DECT_CHANNELS.size()> frame_power_db{};
-    for (size_t i = 0; i < US_DECT_CHANNELS.size(); ++i) {
+    std::array<float, NUM_DECT_CHANNELS> frame_power_db{};
+    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
         const float offset_hz =
-            static_cast<float>(static_cast<int64_t>(US_DECT_CHANNELS[i].freq_hz) -
-                               static_cast<int64_t>(WIDEBAND_CENTER_FREQ_HZ));
+            static_cast<float>(static_cast<int64_t>((*channels_)[i].freq_hz) -
+                               static_cast<int64_t>(center_freq_hz_));
         frame_power_db[i] = band_power_db(spectrum, offset_hz);
         if (!have_history_) {
             smoothed_power_db_[i] = frame_power_db[i];
@@ -341,7 +374,7 @@ bool WidebandMonitor::update_visuals() {
         waterfall_head_ = (waterfall_head_ + 1) % WATERFALL_HISTORY;
         waterfall_rows_filled_ = std::min(waterfall_rows_filled_ + 1, WATERFALL_HISTORY);
 
-        for (size_t i = 0; i < US_DECT_CHANNELS.size(); ++i) {
+        for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
             const float delta_db = std::max(0.0f, smoothed_power_db_[i] - noise_floor_db_);
             peak_delta_db_[i] = std::max(peak_delta_db_[i] * 0.96f, delta_db);
 
@@ -408,7 +441,7 @@ void WidebandMonitor::render_waiting_screen(size_t buffered_samples) const {
     std::printf("\x1b[H\x1b[J");
     std::printf("DeDECTive wideband monitor\n");
     std::printf("  Center: %.3f MHz  Sample rate: %.3f Msps\n",
-                WIDEBAND_CENTER_FREQ_HZ / 1e6,
+                center_freq_hz_ / 1e6,
                 WIDEBAND_SAMPLE_RATE / 1e6);
     std::printf("  Filling analysis buffer: %zu / %zu samples\n\n",
                 buffered_samples, FFT_SIZE);
@@ -428,7 +461,7 @@ void WidebandMonitor::render_frame() {
     std::printf("\x1b[H\x1b[J");
     std::printf("DeDECTive wideband monitor\n");
     std::printf("  Center: %.3f MHz  Sample rate: %.3f Msps  FFT: %zu samples\n",
-                WIDEBAND_CENTER_FREQ_HZ / 1e6,
+                center_freq_hz_ / 1e6,
                 WIDEBAND_SAMPLE_RATE / 1e6,
                 FFT_SIZE);
     std::printf("  Bars show channel power relative to the current band median.\n");

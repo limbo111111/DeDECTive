@@ -233,8 +233,9 @@ int main(int argc, char* argv[]) {
                 std::fprintf(stderr, "Warning: could not open PulseAudio\n");
             }
         }
-        std::printf("Wideband center frequency: %.3f MHz\n", WIDEBAND_CENTER_FREQ_HZ / 1e6);
-        if (!hackrf.set_freq(WIDEBAND_CENTER_FREQ_HZ)) {
+        uint64_t wb_center = dect_center_freq(DectBand::US);
+        std::printf("Wideband center frequency: %.3f MHz\n", wb_center / 1e6);
+        if (!hackrf.set_freq(wb_center)) {
             std::fprintf(stderr, "set_freq failed: %s\n", hackrf.last_error());
             return 1;
         }

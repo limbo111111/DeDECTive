@@ -18,8 +18,6 @@
 namespace dedective {
 
 inline constexpr uint32_t WIDEBAND_SAMPLE_RATE = 18'432'000;
-inline constexpr uint64_t WIDEBAND_CENTER_FREQ_HZ =
-    (US_DECT_CHANNELS.front().freq_hz + US_DECT_CHANNELS.back().freq_hz) / 2;
 
 struct WidebandChannelView {
     int      channel_number      = -1;
@@ -44,7 +42,7 @@ struct WidebandSnapshot {
     std::vector<float> waterfall_db;
     size_t waterfall_rows = 0;
     size_t waterfall_cols = 0;
-    std::array<WidebandChannelView, US_DECT_CHANNELS.size()> channels{};
+    std::array<WidebandChannelView, NUM_DECT_CHANNELS> channels{};
 };
 
 class WidebandMonitor {
@@ -54,6 +52,11 @@ public:
     static constexpr size_t WATERFALL_HISTORY = 160;
 
     WidebandMonitor();
+
+    // Reconfigure for a different DECT band.  Must be called while
+    // capture is stopped (before ingest()).
+    void set_band(DectBand band);
+    uint64_t center_freq() const { return center_freq_hz_; }
 
     void ingest(const std::complex<float>* samples, size_t n);
     bool update_visuals();
@@ -81,21 +84,21 @@ private:
     };
 
     std::vector<std::complex<float>> ring_buffer_;
-    std::array<float, US_DECT_CHANNELS.size()> smoothed_power_db_;
-    std::array<float, US_DECT_CHANNELS.size()> peak_delta_db_;
-    std::array<PhaseDiff, US_DECT_CHANNELS.size()> phase_diff_;
-    std::array<std::complex<float>, US_DECT_CHANNELS.size()> mixer_;
-    std::array<std::complex<float>, US_DECT_CHANNELS.size()> mixer_step_;
-    std::array<std::complex<float>, US_DECT_CHANNELS.size()> decim_accum_;
-    std::array<int, US_DECT_CHANNELS.size()> decim_phase_;
-    std::array<std::unique_ptr<PacketReceiver>, US_DECT_CHANNELS.size()> receivers_;
-    std::array<std::unique_ptr<PacketDecoder>, US_DECT_CHANNELS.size()> decoders_;
-    std::array<bool, US_DECT_CHANNELS.size()> voice_detected_;
-    std::array<int, US_DECT_CHANNELS.size()> active_parts_;
-    std::array<uint64_t, US_DECT_CHANNELS.size()> packets_seen_;
+    std::array<float, NUM_DECT_CHANNELS> smoothed_power_db_;
+    std::array<float, NUM_DECT_CHANNELS> peak_delta_db_;
+    std::array<PhaseDiff, NUM_DECT_CHANNELS> phase_diff_;
+    std::array<std::complex<float>, NUM_DECT_CHANNELS> mixer_;
+    std::array<std::complex<float>, NUM_DECT_CHANNELS> mixer_step_;
+    std::array<std::complex<float>, NUM_DECT_CHANNELS> decim_accum_;
+    std::array<int, NUM_DECT_CHANNELS> decim_phase_;
+    std::array<std::unique_ptr<PacketReceiver>, NUM_DECT_CHANNELS> receivers_;
+    std::array<std::unique_ptr<PacketDecoder>, NUM_DECT_CHANNELS> decoders_;
+    std::array<bool, NUM_DECT_CHANNELS> voice_detected_;
+    std::array<int, NUM_DECT_CHANNELS> active_parts_;
+    std::array<uint64_t, NUM_DECT_CHANNELS> packets_seen_;
     std::array<float, FFT_PLOT_BINS> fft_plot_db_;
     std::vector<float> waterfall_history_;
-    std::array<WidebandChannelView, US_DECT_CHANNELS.size()> channel_views_;
+    std::array<WidebandChannelView, NUM_DECT_CHANNELS> channel_views_;
     size_t write_pos_;
     size_t buffered_samples_;
     uint64_t sample_counter_;
@@ -107,6 +110,10 @@ private:
     mutable std::mutex ring_mutex_;
     mutable std::mutex status_mutex_;
     mutable std::mutex visual_mutex_;
+
+    // Band configuration
+    const std::array<DectChannel, NUM_DECT_CHANNELS>* channels_;
+    uint64_t center_freq_hz_;
 
     // Audio routing
     AudioOutput* audio_out_ = nullptr;
@@ -120,7 +127,8 @@ private:
 
     bool snapshot_latest_block(std::vector<std::complex<float>>& out, size_t& buffered_samples);
     void snapshot_channel_state(
-        std::array<ChannelDecoderSnapshot, US_DECT_CHANNELS.size()>& out) const;
+        std::array<ChannelDecoderSnapshot, NUM_DECT_CHANNELS>& out) const;
+    void configure_band();  // (re)init mixer + channel views from channels_/center_freq_hz_
     void render_waiting_screen(size_t buffered_samples) const;
     void process_sample(std::complex<float> sample) noexcept;
     void on_channel_update(size_t channel_index, const PartInfo parts[], int count) noexcept;

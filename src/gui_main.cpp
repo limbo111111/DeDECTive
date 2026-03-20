@@ -40,6 +40,7 @@ struct GuiState {
     bool  audio_muted = false;
     bool  dc_block = true;     // DC offset correction enabled
     bool  follow_call = false; // auto-retune when call moves channels
+    int   band_index = 0;      // 0 = US, 1 = EU
 };
 
 // Narrowband state: single-channel decode pipeline
@@ -73,6 +74,7 @@ struct CaptureController {
     uint32_t         vga_gain = 20;
     bool             amp_enable = false;
     bool             dc_block_enabled = true;
+    DectBand         active_band = DectBand::US;
     std::string      last_error;
 
     // Narrowband state
@@ -87,7 +89,7 @@ struct CaptureController {
 
         if (!hackrf.set_sample_rate(WIDEBAND_SAMPLE_RATE) ||
             !apply_gains() ||
-            !hackrf.set_freq(WIDEBAND_CENTER_FREQ_HZ)) {
+            !hackrf.set_freq(monitor.center_freq())) {
             last_error = hackrf.last_error();
             return false;
         }
@@ -105,7 +107,8 @@ struct CaptureController {
 
     // ── Narrowband (voice decode) capture ────────────────────────────
     bool start_narrowband(int channel_index) {
-        if (channel_index < 0 || channel_index >= static_cast<int>(US_DECT_CHANNELS.size()))
+        const auto& channels = dect_channels(active_band);
+        if (channel_index < 0 || channel_index >= static_cast<int>(channels.size()))
             return false;
         if (mode != CaptureMode::IDLE) stop();
 
@@ -165,7 +168,7 @@ struct CaptureController {
             }
         );
 
-        uint64_t freq = US_DECT_CHANNELS[channel_index].freq_hz;
+        uint64_t freq = channels[channel_index].freq_hz;
         if (!hackrf.set_sample_rate(SAMPLE_RATE) ||
             !apply_gains() ||
             !hackrf.set_freq(freq)) {
@@ -261,7 +264,8 @@ ImU32 heatmap_color(float t) {
 void draw_waterfall(const WidebandSnapshot& snapshot,
                     const ImVec2& size,
                     float min_db,
-                    float max_db) {
+                    float max_db,
+                    uint64_t center_freq_hz) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     const ImVec2 top_left = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("waterfall", size);
@@ -294,7 +298,7 @@ void draw_waterfall(const WidebandSnapshot& snapshot,
     for (const auto& channel : snapshot.channels) {
         const float norm =
             0.5f + (static_cast<float>(static_cast<int64_t>(channel.freq_hz) -
-                                       static_cast<int64_t>(WIDEBAND_CENTER_FREQ_HZ)) /
+                                       static_cast<int64_t>(center_freq_hz)) /
                     static_cast<float>(WIDEBAND_SAMPLE_RATE));
         const float x = top_left.x + norm * size.x;
         const ImU32 line_color = channel.voice_detected
@@ -311,7 +315,8 @@ void draw_waterfall(const WidebandSnapshot& snapshot,
 void draw_fft_plot(const WidebandSnapshot& snapshot,
                    const ImVec2& size,
                    float min_db,
-                   float max_db) {
+                   float max_db,
+                   uint64_t center_freq_hz) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     const ImVec2 top_left = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("fft_plot", size);
@@ -350,7 +355,7 @@ void draw_fft_plot(const WidebandSnapshot& snapshot,
     for (const auto& channel : snapshot.channels) {
         const float norm =
             0.5f + (static_cast<float>(static_cast<int64_t>(channel.freq_hz) -
-                                       static_cast<int64_t>(WIDEBAND_CENTER_FREQ_HZ)) /
+                                       static_cast<int64_t>(center_freq_hz)) /
                     static_cast<float>(WIDEBAND_SAMPLE_RATE));
         const float x = top_left.x + norm * size.x;
         const ImU32 color = channel.voice_detected
@@ -465,7 +470,7 @@ void draw_narrowband_panel(CaptureController& controller, const ImVec2& size) {
     ImGui::BeginChild("narrowband_panel", size, true);
 
     int ch_idx = controller.nb.channel_index;
-    const auto& ch = US_DECT_CHANNELS[ch_idx];
+    const auto& ch = dect_channels(controller.active_band)[ch_idx];
     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.7f, 1.0f),
                        "Tuned: Channel %d — %.3f MHz  (narrowband voice decode)",
                        ch.number, ch.freq_hz / 1e6);
@@ -766,14 +771,14 @@ int main(int argc, char* argv[]) {
                      ImGuiWindowFlags_NoTitleBar);
 
         if (is_narrowband) {
-            const auto& ch = US_DECT_CHANNELS[controller.nb.channel_index];
+            const auto& ch = dect_channels(controller.active_band)[controller.nb.channel_index];
             ImGui::Text("DeDECTive — narrowband voice decode");
             ImGui::Text("Channel %d  %.3f MHz  Sample rate %.3f Msps",
                         ch.number, ch.freq_hz / 1e6, SAMPLE_RATE / 1e6);
         } else {
             ImGui::Text("DeDECTive — wideband scanner");
             ImGui::Text("Center %.3f MHz  Sample rate %.3f Msps",
-                        WIDEBAND_CENTER_FREQ_HZ / 1e6,
+                        controller.monitor.center_freq() / 1e6,
                         WIDEBAND_SAMPLE_RATE / 1e6);
         }
         ImGui::Separator();
@@ -804,6 +809,18 @@ int main(int argc, char* argv[]) {
             controller.monitor.set_dc_block(gui_state.dc_block);
         }
 
+        ImGui::Spacing();
+        ImGui::BeginDisabled(is_active);
+        {
+            const char* bands[] = { "US Band (1920 MHz)", "EU Band (1880 MHz)" };
+            if (ImGui::Combo("Band", &gui_state.band_index, bands, 2)) {
+                DectBand new_band = gui_state.band_index == 0 ? DectBand::US : DectBand::EU;
+                controller.active_band = new_band;
+                controller.monitor.set_band(new_band);
+            }
+        }
+        ImGui::EndDisabled();
+
         if (!is_active) {
             if (ImGui::Button("Start wideband scan", ImVec2(-1.0f, 0.0f))) {
                 controller.start_wideband();
@@ -818,7 +835,7 @@ int main(int argc, char* argv[]) {
         ImGui::Text("Status");
         if (is_narrowband) {
             ImGui::BulletText("Mode: NARROWBAND");
-            ImGui::BulletText("Channel: %d", US_DECT_CHANNELS[controller.nb.channel_index].number);
+            ImGui::BulletText("Channel: %d", dect_channels(controller.active_band)[controller.nb.channel_index].number);
         } else if (is_wideband) {
             ImGui::BulletText("Mode: WIDEBAND");
             ImGui::BulletText("FFT buffer: %zu / %zu",
@@ -899,7 +916,8 @@ int main(int argc, char* argv[]) {
                           ImVec2(ImGui::GetContentRegionAvail().x - control_w - ImGui::GetStyle().ItemSpacing.x,
                                  fft_h),
                           gui_state.fft_min_db,
-                          gui_state.fft_max_db);
+                          gui_state.fft_max_db,
+                          controller.monitor.center_freq());
             ImGui::SameLine();
             draw_vertical_range_controls("min", "max",
                                          &gui_state.fft_min_db, &gui_state.fft_max_db,
@@ -913,7 +931,8 @@ int main(int argc, char* argv[]) {
                            ImVec2(ImGui::GetContentRegionAvail().x - control_w - ImGui::GetStyle().ItemSpacing.x,
                                   waterfall_h),
                            gui_state.waterfall_min_db,
-                           gui_state.waterfall_max_db);
+                           gui_state.waterfall_max_db,
+                           controller.monitor.center_freq());
             ImGui::SameLine();
             draw_vertical_range_controls("min", "max",
                                          &gui_state.waterfall_min_db, &gui_state.waterfall_max_db,
