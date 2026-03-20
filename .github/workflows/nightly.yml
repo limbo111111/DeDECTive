@@ -42,9 +42,9 @@ jobs:
       - name: Strip & package
         run: |
           strip build/dedective build/dedective_gui
-          tar czf DeDECTive-linux-x86_64.tar.gz \
-            -C build dedective dedective_gui \
-            --transform='s,^,DeDECTive/'
+          mkdir -p DeDECTive
+          cp build/dedective build/dedective_gui DeDECTive/
+          tar czf DeDECTive-linux-x86_64.tar.gz DeDECTive/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -95,9 +95,9 @@ jobs:
       - name: Strip & package
         run: |
           aarch64-linux-gnu-strip build-arm64/dedective
-          tar czf DeDECTive-linux-aarch64.tar.gz \
-            -C build-arm64 dedective \
-            --transform='s,^,DeDECTive/'
+          mkdir -p DeDECTive
+          cp build-arm64/dedective DeDECTive/
+          tar czf DeDECTive-linux-aarch64.tar.gz DeDECTive/
 
       - uses: actions/upload-artifact@v4
         with:

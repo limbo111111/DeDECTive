@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeDECTive :: HackRF One DECT Scanner + Voice Decoder</title>
+  <style>
+    :root {
+      --bg: #0b1837;
+      --panel: #f5f7ff;
+      --panel-border: #6b83c0;
+      --navy: #15306d;
+      --blue: #2a67d1;
+      --bright: #5eb9ff;
+      --yellow: #ffef89;
+      --gold: #d7ac26;
+      --red: #9f1616;
+      --text: #112244;
+      --muted: #516585;
+      --white: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Verdana, Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(94, 185, 255, 0.22), transparent 28%),
+        linear-gradient(180deg, #0a1330 0%, #163878 32%, #0b1837 100%);
+      background-attachment: fixed;
+    }
+
+    a {
+      color: #0c4ec9;
+      font-weight: bold;
+    }
+
+    a:hover {
+      color: #ff6600;
+    }
+
+    .page {
+      width: min(1080px, calc(100% - 24px));
+      margin: 0 auto;
+      padding: 12px 0 36px;
+    }
+
+    .top-strip,
+    .footer-strip {
+      text-align: center;
+      color: #d9e6ff;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      text-shadow: 1px 1px 0 #000;
+    }
+
+    .shell {
+      border: 1px solid #8fb1ff;
+      background: #dce9ff;
+      box-shadow:
+        0 0 0 3px rgba(5, 15, 38, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    }
+
+    .masthead {
+      background: linear-gradient(180deg, #7fd1ff 0%, #3477e0 48%, #173579 49%, #0d1f50 100%);
+      color: var(--white);
+      padding: 18px 18px 16px;
+      border-bottom: 4px solid #ffcf38;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .masthead::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg, rgba(255,255,255,0.35), transparent 36%, transparent 62%, rgba(255,255,255,0.12));
+      pointer-events: none;
+    }
+
+    .brand-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      position: relative;
+      z-index: 1;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-family: Tahoma, Verdana, sans-serif;
+      font-size: clamp(34px, 6vw, 56px);
+      line-height: 0.95;
+      letter-spacing: 0.02em;
+      text-shadow: 2px 2px 0 #11295b, 4px 4px 0 rgba(0, 0, 0, 0.35);
+    }
+
+    .brand .tagline {
+      margin-top: 10px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #fff8c0;
+      text-shadow: 1px 1px 0 #193d8d;
+    }
+
+    .badge-cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: 390px;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border: 1px solid #ffdf76;
+      background: linear-gradient(180deg, #fff7c2 0%, #f1d458 100%);
+      color: #543800;
+      font-size: 11px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+    }
+
+    .nav-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 10px 0;
+      background: linear-gradient(180deg, #19366d 0%, #11264f 100%);
+      border-bottom: 1px solid #90b7ff;
+    }
+
+    .nav-bar a {
+      display: inline-block;
+      color: #ffffff;
+      text-decoration: none;
+      padding: 7px 12px;
+      border: 1px solid #9ebeff;
+      border-bottom: 0;
+      background: linear-gradient(180deg, #5e98f8 0%, #2c5abb 100%);
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.35);
+    }
+
+    .nav-bar a:hover {
+      color: #fff9bd;
+      background: linear-gradient(180deg, #76aeff 0%, #3468cc 100%);
+    }
+
+    .content {
+      padding: 14px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.65), rgba(255,255,255,0.65)),
+        repeating-linear-gradient(0deg, #eef4ff 0, #eef4ff 23px, #e8f0ff 23px, #e8f0ff 24px);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.4fr 0.95fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      box-shadow: inset 0 1px 0 #ffffff, 2px 2px 0 rgba(31, 60, 117, 0.16);
+      margin-bottom: 14px;
+    }
+
+    .panel h2,
+    .panel h3 {
+      margin: 0;
+      padding: 8px 10px;
+      background: linear-gradient(180deg, #d9e8ff 0%, #b6d1ff 48%, #8aade8 49%, #6f90cf 100%);
+      border-bottom: 1px solid #87a7de;
+      color: #10285d;
+      font-family: Tahoma, Verdana, sans-serif;
+      font-size: 18px;
+      text-shadow: 1px 1px 0 rgba(255,255,255,0.75);
+    }
+
+    .panel-body {
+      padding: 12px;
+    }
+
+    .intro-box {
+      background: linear-gradient(180deg, #fffbe3 0%, #fff3b8 100%);
+      border: 1px solid #dcb240;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      color: #5d4300;
+      font-size: 13px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 14px 0 10px;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 10px 14px;
+      border: 1px solid #6f2400;
+      background: linear-gradient(180deg, #ffbb5d 0%, #ff7d2d 52%, #c44700 100%);
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: bold;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.4);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+    }
+
+    .button.alt {
+      border-color: #1b3879;
+      background: linear-gradient(180deg, #8ed2ff 0%, #428df0 52%, #204ba3 100%);
+    }
+
+    .starburst {
+      position: relative;
+      margin: 4px auto 14px;
+      width: 180px;
+      height: 180px;
+      background: radial-gradient(circle, #fff7b8 0%, #ffd13e 55%, #ff9a00 100%);
+      clip-path: polygon(50% 0%, 59% 16%, 76% 5%, 72% 23%, 92% 18%, 80% 35%, 100% 50%, 80% 65%, 92% 82%, 72% 77%, 76% 95%, 59% 84%, 50% 100%, 41% 84%, 24% 95%, 28% 77%, 8% 82%, 20% 65%, 0% 50%, 20% 35%, 8% 18%, 28% 23%, 24% 5%, 41% 16%);
+      border: 2px solid #9b4b00;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: #692400;
+      padding: 20px;
+      font-weight: bold;
+      font-size: 18px;
+      line-height: 1.2;
+      text-transform: uppercase;
+      text-shadow: 1px 1px 0 rgba(255,255,255,0.45);
+      box-shadow: 3px 3px 0 rgba(24, 41, 87, 0.22);
+    }
+
+    .fact-list,
+    .feature-list {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .fact-list li,
+    .feature-list li {
+      margin-bottom: 8px;
+    }
+
+    .status-box {
+      background: linear-gradient(180deg, #edfff2 0%, #c9f0d0 100%);
+      border: 1px solid #68aa75;
+      color: #1a4d26;
+      padding: 10px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .columns {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .mini-panel {
+      background: #ffffff;
+      border: 1px solid #8eaae0;
+      padding: 10px;
+      min-height: 100%;
+    }
+
+    .mini-panel h4 {
+      margin: 0 0 8px;
+      color: #113175;
+      font-size: 15px;
+      font-family: Tahoma, Verdana, sans-serif;
+    }
+
+    .screenshot-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+
+    figure {
+      margin: 0;
+      background: #fff;
+      border: 1px solid #8ca8dd;
+      padding: 8px;
+      box-shadow: 2px 2px 0 rgba(31, 60, 117, 0.12);
+    }
+
+    figure img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border: 1px solid #4b67a2;
+      background: #0a1530;
+    }
+
+    figcaption {
+      margin-top: 8px;
+      color: #33496d;
+      font-size: 12px;
+    }
+
+    .codebox {
+      background: #071227;
+      color: #d8ecff;
+      border: 1px solid #4d72bc;
+      padding: 12px;
+      font-family: "Courier New", monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    }
+
+    .ticker {
+      margin: 8px 0 0;
+      border: 1px solid #4a67a5;
+      background: #0f224c;
+      color: #dbe7ff;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+
+    .legal {
+      border: 2px solid #c74444;
+      background: linear-gradient(180deg, #ffe7e7 0%, #ffd0d0 100%);
+      color: #601313;
+      font-size: 13px;
+      padding: 12px;
+      margin-top: 14px;
+    }
+
+    .footer-strip {
+      margin-top: 10px;
+    }
+
+    .footer-card {
+      background: linear-gradient(180deg, #18356d 0%, #10224b 100%);
+      color: #d8e6ff;
+      border: 1px solid #88acff;
+      padding: 12px;
+      text-align: center;
+      font-size: 12px;
+    }
+
+    .footer-card a {
+      color: #fff29d;
+    }
+
+    .counter {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 8px;
+      background: #000000;
+      border: 1px solid #5a72a3;
+      color: #5cff5c;
+      font-family: "Courier New", monospace;
+      letter-spacing: 0.18em;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .columns,
+      .screenshot-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .brand-row {
+        flex-direction: column;
+      }
+
+      .badge-cloud {
+        justify-content: flex-start;
+        max-width: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top-strip">Best viewed with a HackRF One nearby · no GNU Radio required · pure C++ signal sleuthing</div>
+
+    <div class="shell">
+      <header class="masthead">
+        <div class="brand-row">
+          <div class="brand">
+            <h1>DeDECTive</h1>
+            <div class="tagline">Wideband DECT scanning. Narrowband voice decode. Classic SDR mischief.</div>
+          </div>
+          <div class="badge-cloud">
+            <span class="badge">HackRF One</span>
+            <span class="badge">Linux</span>
+            <span class="badge">GUI + CLI</span>
+            <span class="badge">US + EU Bands</span>
+            <span class="badge">Dear ImGui</span>
+            <span class="badge">PulseAudio</span>
+          </div>
+        </div>
+      </header>
+
+      <nav class="nav-bar">
+        <a href="#overview">Overview</a>
+        <a href="#features">Features</a>
+        <a href="#screens">Screenshots</a>
+        <a href="#download">Quick Start</a>
+        <a href="#internals">Architecture</a>
+        <a href="https://github.com/SarahRoseLives/DeDECTive">GitHub Repo</a>
+      </nav>
+
+      <main class="content">
+        <section class="hero" id="overview">
+          <div>
+            <div class="panel">
+              <h2>Welcome to the cordless underground.</h2>
+              <div class="panel-body">
+                <div class="intro-box">
+                  <strong>DeDECTive</strong> is a Linux-based DECT 6.0 scanner and voice decoder for the <strong>HackRF One</strong>. It captures the whole DECT band in one sweep, spots active channels, then jumps into narrowband mode to decode live G.721 voice with both sides of the call mixed together.
+                </div>
+
+                <p>
+                  This project ships with two frontends: a polished <strong>Dear ImGui desktop GUI</strong> and a fast, keyboard-friendly <strong>terminal CLI</strong>. No GNU Radio stack. No mystery black box. Just direct SDR plumbing, live packet decode, and real-time audio playback.
+                </p>
+
+                <div class="cta-row">
+                  <a class="button" href="https://github.com/SarahRoseLives/DeDECTive">Get the source on GitHub</a>
+                  <a class="button alt" href="#download">See build + run commands</a>
+                </div>
+
+                <div class="ticker">
+                  <marquee behavior="scroll" scrollamount="5">Now scanning: full-band DECT capture · live FFT + waterfall · voice-follow auto retune · RFP + PP audio mixing · wideband monitor mode · EU/US support</marquee>
+                </div>
+              </div>
+            </div>
+
+            <div class="columns" id="features">
+              <div class="mini-panel">
+                <h4>What it does</h4>
+                <ul class="feature-list">
+                  <li>Captures the entire DECT band in a single HackRF pass at 18.432 Msps.</li>
+                  <li>Shows live FFT and waterfall data with adjustable dB range.</li>
+                  <li>Decodes packet activity per channel, including voice presence and sync state.</li>
+                </ul>
+              </div>
+
+              <div class="mini-panel">
+                <h4>When a call appears</h4>
+                <ul class="feature-list">
+                  <li>Tunes to a single channel for full G.721 ADPCM voice decode.</li>
+                  <li>Mixes <strong>RFP</strong> base-station audio with <strong>PP</strong> handset audio.</li>
+                  <li>Tracks channel handoffs with automatic <strong>Follow Call</strong> retuning.</li>
+                </ul>
+              </div>
+
+              <div class="mini-panel">
+                <h4>Why hackers care</h4>
+                <ul class="feature-list">
+                  <li>Clean C++ architecture with reusable core library plus GUI and CLI frontends.</li>
+                  <li>Built-in DC spike correction, FFT smoothing, and gap filling for smoother audio.</li>
+                  <li>Fast setup for RF labs, protocol research, and test-bench experiments.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <aside>
+            <div class="starburst">Hot SDR<br>Utility<br>GUI + CLI</div>
+
+            <div class="panel">
+              <h3>Project facts</h3>
+              <div class="panel-body">
+                <ul class="fact-list">
+                  <li><strong>Platform:</strong> Linux</li>
+                  <li><strong>Radio:</strong> HackRF One</li>
+                  <li><strong>Language:</strong> C++17 + C</li>
+                  <li><strong>Audio:</strong> PulseAudio playback</li>
+                  <li><strong>GUI stack:</strong> Dear ImGui + SDL2 + OpenGL</li>
+                  <li><strong>CLI modes:</strong> Voice follow, wideband monitor, fixed channel scan</li>
+                  <li><strong>Region support:</strong> US and EU DECT bands</li>
+                </ul>
+
+                <div class="status-box">
+                  <strong>Bonus:</strong> one-click GUI tuning, keyboard-driven CLI navigation, and automatic return to wideband scan after silence.
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>Why this project stands out</h3>
+              <div class="panel-body">
+                <p>
+                  DeDECTive is not just a decoder. It is an end-to-end DECT workflow: detect activity, inspect the spectrum, lock onto a voice channel, decode both sides, then follow the call when it hops.
+                </p>
+                <p>
+                  The protocol pipeline was ported and adapted from <a href="https://github.com/pavelyazev/gr-dect2">gr-dect2</a>, then wrapped in a lean native toolchain that is easy to build and quick to run.
+                </p>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="panel" id="screens">
+          <h2>Live screens from the field</h2>
+          <div class="panel-body">
+            <div class="screenshot-grid">
+              <figure>
+                <img src="main.png" alt="DeDECTive wideband scanner GUI screenshot">
+                <figcaption><strong>Wideband Scanner GUI:</strong> live FFT, waterfall, activity table, and tune buttons for jumping into narrowband decode.</figcaption>
+              </figure>
+
+              <figure>
+                <img src="call_following.png" alt="DeDECTive narrowband call following GUI screenshot">
+                <figcaption><strong>Narrowband Voice Decode:</strong> tracks an active call, decodes both sides, and follows channel handoffs automatically.</figcaption>
+              </figure>
+
+              <figure>
+                <img src="cli_default_start.png" alt="DeDECTive CLI scanning screenshot">
+                <figcaption><strong>CLI Voice Follow:</strong> launch with no flags to start scanning the full band for active DECT voice.</figcaption>
+              </figure>
+
+              <figure>
+                <img src="cli_active_call.png" alt="DeDECTive CLI active call screenshot">
+                <figcaption><strong>CLI Active Decode:</strong> once a call is found, the terminal frontend switches to narrowband and plays mixed audio.</figcaption>
+              </figure>
+
+              <figure>
+                <img src="cli_wideband_scanner.png" alt="DeDECTive CLI wideband monitor screenshot">
+                <figcaption><strong>CLI Wideband Monitor:</strong> a text-mode view of per-channel power bars, packet counts, and voice activity across the band.</figcaption>
+              </figure>
+            </div>
+          </div>
+        </section>
+
+        <section class="columns">
+          <div class="panel">
+            <h3>Signal tricks inside</h3>
+            <div class="panel-body">
+              <ul class="feature-list">
+                <li>IIR high-pass filtering to tame the HackRF DC spike.</li>
+                <li>Fast-attack / slow-decay FFT smoothing for a cleaner spectrum display.</li>
+                <li>Sequence-gap filling with G.721 comfort noise to reduce clicks.</li>
+                <li>Timeslot tracking across slots 0-11 downlink and 12-23 uplink.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h3>CLI commands you can brag about</h3>
+            <div class="panel-body">
+              <ul class="feature-list">
+                <li><code>./build/dedective</code> starts voice-follow mode.</li>
+                <li><code>./build/dedective -e</code> switches to EU band support.</li>
+                <li><code>./build/dedective -W -l</code> opens the text wideband monitor.</li>
+                <li><code>n</code>, <code>p</code>, and <code>q</code> control channel flow from the keyboard.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="panel" id="internals">
+            <h3>Architecture snapshot</h3>
+            <div class="panel-body">
+              <ul class="feature-list">
+                <li><strong>dedective_core</strong> handles HackRF I/O, packet RX/decoder, wideband monitoring, audio, and codec logic.</li>
+                <li><strong>dedective</strong> is the command-line frontend.</li>
+                <li><strong>dedective_gui</strong> provides the Dear ImGui desktop UI.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="download">
+          <h2>Quick start download zone</h2>
+          <div class="panel-body">
+            <p>
+              Build it with CMake, link against <strong>libhackrf</strong>, <strong>libpulse-simple</strong>, <strong>SDL2</strong>, <strong>imgui</strong>, and <strong>OpenGL</strong>, then launch whichever frontend fits your mood.
+            </p>
+
+            <div class="codebox">cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+# GUI (recommended)
+./build/dedective_gui
+
+# CLI voice-follow
+./build/dedective
+
+# CLI EU band
+./build/dedective -e
+
+# CLI wideband monitor
+./build/dedective -W -l
+
+# CLI fixed channel voice decode
+./build/dedective -c 0 -V -l</div>
+          </div>
+        </section>
+
+        <section class="legal">
+          <strong>Legal warning:</strong> DeDECTive is intended for controlled lab and test environments only. Intercepting or decoding wireless communications without authorization may violate federal, state, local, or equivalent laws in your jurisdiction. Use responsibly and only where you are permitted to do so.
+        </section>
+      </main>
+    </div>
+
+    <div class="footer-strip">Retro landing page transmission complete</div>
+    <footer class="footer-card">
+      <div><strong>DeDECTive</strong> :: DECT 6.0 scanner + voice decoder for HackRF One</div>
+      <div>Source, screenshots, and build details live at <a href="https://github.com/SarahRoseLives/DeDECTive">github.com/SarahRoseLives/DeDECTive</a></div>
+      <div class="counter">0002005</div>
+    </footer>
+  </div>
+</body>
+</html>
