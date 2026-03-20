@@ -1,5 +1,9 @@
 # DeDECTive
 
+> **⚠️ Legal Warning**
+>
+> Intercepting or decoding wireless communications you are not authorized to access may violate federal, state, and local laws, including the U.S. Electronic Communications Privacy Act (18 U.S.C. § 2511) and equivalent laws in other jurisdictions. **This software is intended for use in controlled lab/test environments only.** The author takes no responsibility for how this software is used. By using DeDECTive, you accept full legal responsibility for your actions.
+
 `DeDECTive` is a Linux-based DECT 6.0 scanner and voice decoder for the HackRF One. It includes both a Dear ImGui GUI and a terminal CLI — no GNU Radio required.
 
 ## GUI

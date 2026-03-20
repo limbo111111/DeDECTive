@@ -500,6 +500,38 @@ int main(int argc, char* argv[]) {
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
 
+    // ── Legal disclaimer ──
+    std::printf(
+        "════════════════════════════════════════════════════════════════\n"
+        "  DeDECTive — DECT Scanner & Voice Decoder\n"
+        "════════════════════════════════════════════════════════════════\n"
+        "\n"
+        "  WARNING: Intercepting or decoding wireless communications\n"
+        "  you are not authorized to access may violate federal, state,\n"
+        "  and local laws. This software is intended for use in\n"
+        "  controlled lab/test environments only.\n"
+        "\n"
+        "  The author takes no responsibility for how this software\n"
+        "  is used. By proceeding, you accept full legal responsibility\n"
+        "  for your actions.\n"
+        "\n"
+        "════════════════════════════════════════════════════════════════\n"
+        "\n"
+        "  Do you accept these terms? [y/N]: ");
+    std::fflush(stdout);
+    {
+        char response = 0;
+        if (::read(STDIN_FILENO, &response, 1) != 1 ||
+            (response != 'y' && response != 'Y')) {
+            std::printf("\nDisclaimer not accepted. Exiting.\n");
+            return 0;
+        }
+        // Drain any trailing newline
+        char drain;
+        while (::read(STDIN_FILENO, &drain, 1) == 1 && drain != '\n') {}
+    }
+    std::printf("\n");
+
     // Open HackRF
     HackrfSource hackrf;
     std::printf("DeDECTive — Opening HackRF... ");

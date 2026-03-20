@@ -679,6 +679,7 @@ int main(int argc, char* argv[]) {
     bool screenshot_taken = false;
     auto auto_deadline = std::chrono::steady_clock::time_point{};
     bool done = false;
+    bool disclaimer_accepted = false;
 
     // Follow-call state
     using clock = std::chrono::steady_clock;
@@ -698,7 +699,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (auto_start && controller.mode == CaptureMode::IDLE) {
+        if (disclaimer_accepted && auto_start && controller.mode == CaptureMode::IDLE) {
             if (controller.start_wideband() && demo_seconds > 0) {
                 auto_deadline = std::chrono::steady_clock::now() +
                                 std::chrono::seconds(demo_seconds);
@@ -761,6 +762,45 @@ int main(int argc, char* argv[]) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+
+        // ── Legal disclaimer modal ──────────────────────────────────
+        if (!disclaimer_accepted) {
+            ImGui::OpenPopup("Legal Disclaimer");
+            ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+            ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(520, 0));
+            if (ImGui::BeginPopupModal("Legal Disclaimer", nullptr,
+                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+                ImGui::TextWrapped(
+                    "WARNING: Intercepting or decoding wireless communications "
+                    "you are not authorized to access may violate federal, state, "
+                    "and local laws. This software is intended for use in "
+                    "controlled lab/test environments only.");
+                ImGui::Spacing();
+                ImGui::TextWrapped(
+                    "The author takes no responsibility for how this software "
+                    "is used. By clicking Accept, you acknowledge that you accept "
+                    "full legal responsibility for your actions.");
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                float button_w = 120.0f;
+                float avail = ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - button_w * 2 - 20) * 0.5f);
+                if (ImGui::Button("Accept", ImVec2(button_w, 0))) {
+                    disclaimer_accepted = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(0, 20);
+                if (ImGui::Button("Decline", ImVec2(button_w, 0))) {
+                    done = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        if (disclaimer_accepted) {
 
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
@@ -946,6 +986,8 @@ int main(int argc, char* argv[]) {
         ImGui::EndChild();
 
         ImGui::End();
+
+        } // end if (disclaimer_accepted)
 
         ImGui::Render();
         glViewport(0, 0, static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y));
