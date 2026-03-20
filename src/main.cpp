@@ -21,6 +21,7 @@
 #include "packet_decoder.h"
 #include "dect_channels.h"
 #include "wideband_monitor.h"
+#include "audio_output.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -47,12 +48,13 @@ struct ScanContext {
     PhaseDiff      phase_diff;
     PacketReceiver receiver;
     PacketDecoder  decoder;
+    AudioOutput*   audio_out = nullptr;
     std::mutex     print_mutex;
     uint64_t       cur_freq_hz  = 0;
     int            cur_channel  = -1;
     uint64_t       packets_seen = 0;
 
-    ScanContext(int channel, uint64_t freq_hz)
+    ScanContext(int channel, uint64_t freq_hz, AudioOutput* audio = nullptr)
         : receiver(
             // on_packet
             [this](const ReceivedPacket& pkt) {
@@ -68,8 +70,14 @@ struct ScanContext {
             // on_update
             [this](const PartInfo parts[], int count) {
                 print_parts(parts, count);
+            },
+            // on_voice
+            [this](int rx_id, const int16_t* pcm, size_t count) {
+                if (audio_out)
+                    audio_out->write_samples(pcm, count);
             }
           )
+        , audio_out(audio)
         , cur_freq_hz(freq_hz)
         , cur_channel(channel)
     {}
@@ -119,6 +127,7 @@ static void print_usage(const char* prog) {
         "  -c <ch>    Scan only channel 0-9           (default: all)\n"
         "  -l         Loop continuously until Ctrl-C\n"
         "  -W         Wideband mode: monitor all channels at once\n"
+        "  -V         Enable voice decode (audio output via PulseAudio)\n"
         "  -h         Show this help\n"
         "\nUS DECT 6.0 Channels:\n",
         prog);
@@ -139,6 +148,7 @@ int main(int argc, char* argv[]) {
     int      fixed_chan  = -1;  // -1 = scan all
     bool     loop        = false;
     bool     wideband    = false;
+    bool     voice_en    = false;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
@@ -149,6 +159,7 @@ int main(int argc, char* argv[]) {
         else if (strcmp(argv[i], "-a") == 0)               amp_enable  = true;
         else if (strcmp(argv[i], "-l") == 0)               loop        = true;
         else if (strcmp(argv[i], "-W") == 0)               wideband    = true;
+        else if (strcmp(argv[i], "-V") == 0)               voice_en    = true;
         else if (strcmp(argv[i], "-h") == 0) { print_usage(argv[0]); return 0; }
         else { std::fprintf(stderr, "Unknown option: %s\n", argv[i]); print_usage(argv[0]); return 1; }
     }
@@ -213,6 +224,15 @@ int main(int argc, char* argv[]) {
 
     if (wideband) {
         WidebandMonitor monitor;
+        AudioOutput audio;
+        if (voice_en) {
+            if (audio.start()) {
+                monitor.set_audio_output(&audio);
+                std::printf("Voice decode enabled (PulseAudio output)\n");
+            } else {
+                std::fprintf(stderr, "Warning: could not open PulseAudio\n");
+            }
+        }
         std::printf("Wideband center frequency: %.3f MHz\n", WIDEBAND_CENTER_FREQ_HZ / 1e6);
         if (!hackrf.set_freq(WIDEBAND_CENTER_FREQ_HZ)) {
             std::fprintf(stderr, "set_freq failed: %s\n", hackrf.last_error());
@@ -237,6 +257,14 @@ int main(int argc, char* argv[]) {
     }
 
     // Scan loop
+    AudioOutput scan_audio;
+    if (voice_en && !wideband) {
+        if (scan_audio.start())
+            std::printf("Voice decode enabled (PulseAudio output)\n");
+        else
+            std::fprintf(stderr, "Warning: could not open PulseAudio\n");
+    }
+
     do {
         for (auto& chan : channels) {
             if (!g_running) break;
@@ -246,7 +274,9 @@ int main(int argc, char* argv[]) {
             std::fflush(stdout);
 
             // Fresh context for each channel (reset state)
-            ScanContext ctx(chan.number, chan.freq_hz);
+            AudioOutput* audio_ptr = (voice_en && scan_audio.is_running())
+                                   ? &scan_audio : nullptr;
+            ScanContext ctx(chan.number, chan.freq_hz, audio_ptr);
 
             if (!hackrf.set_freq(chan.freq_hz)) {
                 std::fprintf(stderr, "  set_freq failed: %s — skipping\n",

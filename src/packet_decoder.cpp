@@ -43,11 +43,15 @@ std::string PartInfo::part_id_hex() const {
 
 // ── PacketDecoder ────────────────────────────────────────────────────────────
 
-PacketDecoder::PacketDecoder(PartCallback on_update)
-    : on_update_(std::move(on_update))
+PacketDecoder::PacketDecoder(PartCallback on_update, VoiceCallback on_voice)
+    : on_update_(std::move(on_update)),
+      on_voice_(std::move(on_voice))
 {
     memset(parts_, 0, sizeof(parts_));
-    for (auto& p : parts_) p.pair_rx_id = -1;
+    for (auto& p : parts_) {
+        p.pair_rx_id = -1;
+        g72x_init_state(&p.g721_state);
+    }
 }
 
 // ── CRC helpers ──────────────────────────────────────────────────────────────
@@ -150,7 +154,12 @@ bool PacketDecoder::decode_afield(const uint8_t* bits, int rx_id) noexcept {
         break;
     case 4: // Qt — multiframe sync / system info (frame 8 of 16)
         ps.frame_number = 8;
-        ps.qt_rcvd      = true;
+        if (!ps.qt_rcvd) {
+            ps.qt_rcvd   = true;
+            ps.log_dirty = true;
+            // Fresh G.721 state — any pre-sync state would be from garbage
+            g72x_init_state(&ps.g721_state);
+        }
         break;
     default:
         break;
@@ -166,7 +175,67 @@ bool PacketDecoder::decode_afield(const uint8_t* bits, int rx_id) noexcept {
     return true;
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── B-field voice decode ─────────────────────────────────────────────────
+// Extract B-field (bits 64–383), validate X-CRC (bits 384–387), descramble,
+// decode G.721 ADPCM → 80 × int16_t PCM samples, emit via voice callback.
+
+void PacketDecoder::decode_bfield(const uint8_t* bits, int rx_id) noexcept {
+    PartState& ps = parts_[rx_id];
+    if (!on_voice_) return;
+    if (!ps.active || !ps.voice_present) return;
+
+    // Must have Qt sync for correct frame_number — without it, descrambling
+    // produces garbage that corrupts G.721 state irreversibly.
+    if (!ps.qt_rcvd) {
+        ++ps.voice_skipped;
+        return;
+    }
+
+    // Pack 320 B-field bits (1-bit-per-byte) into 40 bytes
+    uint8_t b_field[40] = {};
+    for (int i = 0; i < 320; ++i)
+        b_field[i >> 3] = (b_field[i >> 3] << 1) | (bits[64 + i] & 1);
+
+    // Extract X-CRC from bits 384–387
+    uint8_t x_received = 0;
+    x_received |= (bits[384] & 1) << 3;
+    x_received |= (bits[385] & 1) << 2;
+    x_received |= (bits[386] & 1) << 1;
+    x_received |= (bits[387] & 1);
+
+    uint8_t xcrc = calc_xcrc(b_field);
+    if (xcrc != x_received) {
+        ++ps.voice_xcrc_fail;
+        // Feed zero nibbles through G.721 to keep state consistent (graceful
+        // convergence to silence rather than hard discontinuity).
+        int16_t pcm[80];
+        for (int i = 0; i < 80; ++i)
+            pcm[i] = static_cast<int16_t>(
+                g721_decoder(0, AUDIO_ENCODING_LINEAR, &ps.g721_state));
+        on_voice_(rx_id, pcm, 80);
+        return;
+    }
+
+    // For paired PPs, use the RFP's frame_number (authoritative source)
+    uint8_t fn = ps.frame_number;
+    if (ps.type == PartType::PP && ps.pair_rx_id >= 0)
+        fn = parts_[ps.pair_rx_id].frame_number;
+
+    // Descramble B-field → 80 G.721 ADPCM nibbles
+    uint8_t nibbles[80];
+    descramble(b_field, nibbles, fn);
+
+    // Decode G.721 ADPCM → PCM
+    int16_t pcm[80];
+    for (int i = 0; i < 80; ++i)
+        pcm[i] = static_cast<int16_t>(
+            g721_decoder(nibbles[i], AUDIO_ENCODING_LINEAR, &ps.g721_state));
+
+    ++ps.voice_frames_ok;
+    on_voice_(rx_id, pcm, 80);
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────
 
 bool PacketDecoder::ids_equal(const uint8_t* a, const uint8_t* b) noexcept {
     for (int i = 0; i < 5; ++i) if (a[i] != b[i]) return false;
@@ -201,8 +270,12 @@ void PacketDecoder::publish_update() noexcept {
         pi.type             = ps.type;
         pi.voice_present    = ps.voice_present;
         pi.part_id_valid    = ps.part_id_rcvd;
+        pi.qt_synced        = ps.qt_rcvd;
         pi.packets_ok       = ps.packet_cnt;
         pi.packets_bad_crc  = ps.bad_crc_cnt;
+        pi.voice_frames_ok  = ps.voice_frames_ok;
+        pi.voice_xcrc_fail  = ps.voice_xcrc_fail;
+        pi.voice_skipped    = ps.voice_skipped;
         memcpy(pi.part_id, ps.part_id, 5);
     }
     on_update_(info, count);
@@ -224,13 +297,12 @@ void PacketDecoder::process_packet(const ReceivedPacket& pkt) noexcept {
             // Propagate frame number to paired PP if present
             if (ps.pair_rx_id >= 0) {
                 parts_[ps.pair_rx_id].frame_number = ps.frame_number;
-                parts_[ps.pair_rx_id].rfp_fn_cor   = true;
             }
         } else { // PP
-            if (!ps.rfp_fn_cor)
+            // Once paired, PP frame_number is always driven by RFP (set in
+            // the RFP branch above).  Only self-advance while unpaired.
+            if (ps.pair_rx_id < 0)
                 ps.frame_number = (ps.frame_number + (uint8_t)seq_diff) & 0x0F;
-            else
-                ps.rfp_fn_cor = false;
         }
 
         ps.rx_seq = pkt.rx_seq;
@@ -249,17 +321,28 @@ void PacketDecoder::process_packet(const ReceivedPacket& pkt) noexcept {
         ps.log_dirty     = true;
         ps.pair_rx_id    = -1;
         memset(ps.part_id, 0, 5);
+        g72x_init_state(&ps.g721_state);
     }
 
     // Decode A-field
     bool a_ok = decode_afield(pkt.bits, rx_id);
 
+    // Decode B-field voice if A-field was valid
+    if (a_ok)
+        decode_bfield(pkt.bits, rx_id);
+
     // Try to pair PP with its RFP
     try_pair(rx_id);
 
-    // Propagate qt flag to paired PP
-    if (pkt.type == PartType::RFP && ps.qt_rcvd && ps.pair_rx_id >= 0)
-        parts_[ps.pair_rx_id].qt_rcvd = true;
+    // Propagate qt flag to paired PP and reset its G.721 state
+    if (pkt.type == PartType::RFP && ps.qt_rcvd && ps.pair_rx_id >= 0) {
+        PartState& pp = parts_[ps.pair_rx_id];
+        if (!pp.qt_rcvd) {
+            pp.qt_rcvd = true;
+            pp.log_dirty = true;
+            g72x_init_state(&pp.g721_state);
+        }
+    }
 
     // Publish on: new part registered, part_id newly received, voice change,
     // or periodic stats update every 100 packets so caller sees CRC diagnostics
@@ -283,6 +366,7 @@ void PacketDecoder::notify_lost(int rx_id) noexcept {
 
     memset(&ps, 0, sizeof(ps));
     ps.pair_rx_id = -1;
+    g72x_init_state(&ps.g721_state);
 
     if (had_id) publish_update();
 }

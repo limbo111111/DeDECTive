@@ -10,6 +10,7 @@ It currently supports:
 - voice presence detection
 - wideband realtime activity visualization across the full US DECT band
 - wideband per-channel voice indication from DECT packet decode
+- a Dear ImGui wideband GUI with FFT and waterfall views
 
 Current limitation:
 - voice decode does not work yet
@@ -44,3 +45,21 @@ Wideband activity and voice monitor:
 ```
 
 This mode captures the whole US DECT band in one HackRF pass, shows live per-channel activity bars, and reports whether voice is currently detected on each channel from DECT packet decode state. It is still not a voice decoder.
+
+GUI wideband prototype:
+
+```bash
+./build/dedective_gui
+```
+
+The GUI is currently focused on the wideband scanner workflow. It includes:
+- live HackRF control and start/stop capture
+- per-channel status table
+- FFT view of the full captured DECT band
+- waterfall view with channel markers showing active and voice-detected channels
+
+For a headless smoke test or automated capture:
+
+```bash
+./build/dedective_gui --demo-seconds 2 --screenshot gui.ppm
+```
