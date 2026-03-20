@@ -95,9 +95,12 @@ bool HackrfSource::set_sample_rate(uint32_t sample_rate) {
         last_error_ = hackrf_error_name(static_cast<hackrf_error>(r));
         return false;
     }
-    // Baseband filter: pick closest to occupied bandwidth (~1.4 MHz).
-    // hackrf_set_baseband_filter_bandwidth takes Hz; rounds to nearest valid value.
-    hackrf_set_baseband_filter_bandwidth(static_cast<hackrf_device*>(device_), 1'750'000);
+    const uint32_t bandwidth = hackrf_compute_baseband_filter_bw(sample_rate);
+    r = hackrf_set_baseband_filter_bandwidth(static_cast<hackrf_device*>(device_), bandwidth);
+    if (r != HACKRF_SUCCESS) {
+        last_error_ = hackrf_error_name(static_cast<hackrf_error>(r));
+        return false;
+    }
     return true;
 }
 

@@ -12,6 +12,7 @@
  *   -d <secs>  Dwell time per channel in seconds (default: 3)
  *   -c <ch>    Scan only this channel number 0-5 (default: all)
  *   -l         Loop scan continuously until Ctrl-C
+ *   -W         Wideband monitor of the whole US DECT band
  */
 
 #include "hackrf_source.h"
@@ -19,6 +20,7 @@
 #include "packet_receiver.h"
 #include "packet_decoder.h"
 #include "dect_channels.h"
+#include "wideband_monitor.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -116,12 +118,14 @@ static void print_usage(const char* prog) {
         "  -d <secs>  Dwell time per channel, seconds (default: 3)\n"
         "  -c <ch>    Scan only channel 0-9           (default: all)\n"
         "  -l         Loop continuously until Ctrl-C\n"
+        "  -W         Wideband mode: monitor all channels at once\n"
         "  -h         Show this help\n"
         "\nUS DECT 6.0 Channels:\n",
         prog);
     for (auto& ch : US_DECT_CHANNELS)
         std::printf("  %d  %s\n", ch.number, ch.label);
     std::printf("\nSample rate: %u Hz  (4 samples/symbol)\n", SAMPLE_RATE);
+    std::printf("Wideband mode sample rate: %u Hz\n", WIDEBAND_SAMPLE_RATE);
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -131,19 +135,34 @@ int main(int argc, char* argv[]) {
     uint32_t vga_gain    = 20;
     bool     amp_enable  = false;
     int      dwell_secs  = 3;
+    bool     dwell_set   = false;
     int      fixed_chan  = -1;  // -1 = scan all
     bool     loop        = false;
+    bool     wideband    = false;
 
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
         if      (strcmp(argv[i], "-g") == 0 && i+1 < argc) lna_gain   = (uint32_t)atoi(argv[++i]);
         else if (strcmp(argv[i], "-v") == 0 && i+1 < argc) vga_gain   = (uint32_t)atoi(argv[++i]);
-        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) dwell_secs = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) { dwell_secs = atoi(argv[++i]); dwell_set = true; }
         else if (strcmp(argv[i], "-c") == 0 && i+1 < argc) fixed_chan  = atoi(argv[++i]);
         else if (strcmp(argv[i], "-a") == 0)               amp_enable  = true;
         else if (strcmp(argv[i], "-l") == 0)               loop        = true;
+        else if (strcmp(argv[i], "-W") == 0)               wideband    = true;
         else if (strcmp(argv[i], "-h") == 0) { print_usage(argv[0]); return 0; }
         else { std::fprintf(stderr, "Unknown option: %s\n", argv[i]); print_usage(argv[0]); return 1; }
+    }
+
+    if (dwell_secs <= 0) {
+        std::fprintf(stderr, "Duration must be positive.\n");
+        return 1;
+    }
+    if (wideband && fixed_chan >= 0) {
+        std::fprintf(stderr, "Wideband mode captures all channels at once; do not combine -W with -c.\n");
+        return 1;
+    }
+    if (wideband && !loop && !dwell_set) {
+        dwell_secs = 10;
     }
 
     signal(SIGINT,  signal_handler);
@@ -152,9 +171,13 @@ int main(int argc, char* argv[]) {
     std::printf("DeDECTive v0.1 - US DECT 6.0 Scanner\n");
     std::printf("  LNA gain: %u dB  VGA gain: %u dB  Amp: %s\n",
                 lna_gain, vga_gain, amp_enable ? "ON" : "off");
-    std::printf("  Dwell:    %d s per channel\n", dwell_secs);
-    std::printf("  Mode:     %s\n\n",
-                loop ? "continuous loop" : "single pass");
+    if (wideband)
+        std::printf("  Duration: %d s\n", dwell_secs);
+    else
+        std::printf("  Dwell:    %d s per channel\n", dwell_secs);
+    std::printf("  Mode:     %s%s\n\n",
+                loop ? "continuous loop" : "single pass",
+                wideband ? " wideband monitor" : "");
 
     // Build channel list for this scan pass
     std::vector<DectChannel> channels;
@@ -174,7 +197,8 @@ int main(int argc, char* argv[]) {
     }
     std::printf("OK\n");
 
-    if (!hackrf.set_sample_rate(SAMPLE_RATE)) {
+    const uint32_t sample_rate = wideband ? WIDEBAND_SAMPLE_RATE : SAMPLE_RATE;
+    if (!hackrf.set_sample_rate(sample_rate)) {
         std::fprintf(stderr, "set_sample_rate failed: %s\n", hackrf.last_error());
         return 1;
     }
@@ -185,6 +209,31 @@ int main(int argc, char* argv[]) {
     if (!hackrf.set_amp_enable(amp_enable)) {
         std::fprintf(stderr, "set_amp failed: %s\n", hackrf.last_error());
         return 1;
+    }
+
+    if (wideband) {
+        WidebandMonitor monitor;
+        std::printf("Wideband center frequency: %.3f MHz\n", WIDEBAND_CENTER_FREQ_HZ / 1e6);
+        if (!hackrf.set_freq(WIDEBAND_CENTER_FREQ_HZ)) {
+            std::fprintf(stderr, "set_freq failed: %s\n", hackrf.last_error());
+            return 1;
+        }
+        if (!hackrf.start([&monitor](const std::complex<float>* samples, size_t n) {
+                monitor.ingest(samples, n);
+            })) {
+            std::fprintf(stderr, "start failed: %s\n", hackrf.last_error());
+            return 1;
+        }
+
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(dwell_secs);
+        while (g_running && (loop || std::chrono::steady_clock::now() < deadline)) {
+            monitor.render_frame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+
+        hackrf.stop();
+        std::printf("\nDone.\n");
+        return 0;
     }
 
     // Scan loop
@@ -205,9 +254,13 @@ int main(int argc, char* argv[]) {
                 continue;
             }
 
-            hackrf.start([&ctx](const std::complex<float>* s, size_t n) {
-                iq_callback(&ctx, s, n);
-            });
+            if (!hackrf.start([&ctx](const std::complex<float>* s, size_t n) {
+                    iq_callback(&ctx, s, n);
+                })) {
+                std::fprintf(stderr, "  start failed: %s — skipping\n",
+                             hackrf.last_error());
+                continue;
+            }
 
             // Dwell — if we detect activity mid-scan, extend the window
             auto deadline = std::chrono::steady_clock::now()

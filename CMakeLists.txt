@@ -14,6 +14,7 @@ add_executable(dedective
     src/hackrf_source.cpp
     src/packet_receiver.cpp
     src/packet_decoder.cpp
+    src/wideband_monitor.cpp
 )
 
 target_link_libraries(dedective PRIVATE PkgConfig::HACKRF)
