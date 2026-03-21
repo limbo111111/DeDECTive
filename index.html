@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DeDECTive :: HackRF One DECT Scanner + Voice Decoder</title>
+  <title>DeDECTive :: DECT Scanner + Voice Decoder for Linux and Android</title>
   <style>
     :root {
       --bg: #0b1837;
@@ -396,22 +396,23 @@
 </head>
 <body>
   <div class="page">
-    <div class="top-strip">Best viewed with a HackRF One nearby · no GNU Radio required · pure C++ signal sleuthing</div>
+    <div class="top-strip">Linux GUI + CLI today · Android preview in-tree · no GNU Radio required</div>
 
     <div class="shell">
       <header class="masthead">
         <div class="brand-row">
           <div class="brand">
             <h1>DeDECTive</h1>
-            <div class="tagline">Wideband DECT scanning. Narrowband voice decode. Classic SDR mischief.</div>
+            <div class="tagline">Wideband DECT scanning, narrowband voice decode, and shared native core logic.</div>
           </div>
           <div class="badge-cloud">
             <span class="badge">HackRF One</span>
             <span class="badge">Linux</span>
+            <span class="badge">Android Preview</span>
             <span class="badge">GUI + CLI</span>
             <span class="badge">US + EU Bands</span>
-            <span class="badge">Dear ImGui</span>
-            <span class="badge">PulseAudio</span>
+            <span class="badge">Dear ImGui + Flutter</span>
+            <span class="badge">No GNU Radio</span>
           </div>
         </div>
       </header>
@@ -432,11 +433,11 @@
               <h2>Welcome to the cordless underground.</h2>
               <div class="panel-body">
                 <div class="intro-box">
-                  <strong>DeDECTive</strong> is a Linux-based DECT 6.0 scanner and voice decoder for the <strong>HackRF One</strong>. It captures the whole DECT band in one sweep, spots active channels, then jumps into narrowband mode to decode live G.721 voice with both sides of the call mixed together.
+                  <strong>DeDECTive</strong> is a DECT 6.0 scanner and voice decoder for the <strong>HackRF One</strong>. The main project targets <strong>Linux</strong> with native GUI and CLI frontends, and now also includes an in-tree <strong>Android preview app</strong> that reuses the same DECT decode pipeline through Flutter + FFI.
                 </div>
 
                 <p>
-                  This project ships with two frontends: a polished <strong>Dear ImGui desktop GUI</strong> and a fast, keyboard-friendly <strong>terminal CLI</strong>. No GNU Radio stack. No mystery black box. Just direct SDR plumbing, live packet decode, and real-time audio playback.
+                  On desktop, DeDECTive captures the full DECT band in one wideband pass, exposes per-channel packet and voice activity, and retunes into narrowband mode for live G.721 voice playback with both sides of the call mixed together. The Android app follows the same wideband-scan / narrowband-follow design, but it is still being tuned against real phone + HackRF hardware.
                 </p>
 
                 <div class="cta-row">
@@ -445,7 +446,7 @@
                 </div>
 
                 <div class="ticker">
-                  <marquee behavior="scroll" scrollamount="5">Now scanning: full-band DECT capture · live FFT + waterfall · voice-follow auto retune · RFP + PP audio mixing · wideband monitor mode · EU/US support</marquee>
+                  <marquee behavior="scroll" scrollamount="5">Now scanning: Linux GUI + CLI · wideband monitor + voice follow · DECT packet + Qt detection · RFP + PP audio mixing · Android preview app in progress · EU/US support</marquee>
                 </div>
               </div>
             </div>
@@ -454,27 +455,27 @@
               <div class="mini-panel">
                 <h4>What it does</h4>
                 <ul class="feature-list">
-                  <li>Captures the entire DECT band in a single HackRF pass at 18.432 Msps.</li>
-                  <li>Shows live FFT and waterfall data with adjustable dB range.</li>
-                  <li>Decodes packet activity per channel, including voice presence and sync state.</li>
+                  <li>Captures the entire DECT band in a single HackRF pass at 18.432 Msps on the Linux desktop frontends.</li>
+                  <li>Shows live FFT, waterfall, and per-channel DECT activity with packet, voice, and Qt sync state.</li>
+                  <li>Supports both voice-follow scanning and fixed-channel investigation modes.</li>
                 </ul>
               </div>
 
               <div class="mini-panel">
                 <h4>When a call appears</h4>
                 <ul class="feature-list">
-                  <li>Tunes to a single channel for full G.721 ADPCM voice decode.</li>
+                  <li>Retunes to a single channel for 4.608 Msps narrowband G.721 ADPCM voice decode.</li>
                   <li>Mixes <strong>RFP</strong> base-station audio with <strong>PP</strong> handset audio.</li>
-                  <li>Tracks channel handoffs with automatic <strong>Follow Call</strong> retuning.</li>
+                  <li>Tracks channel handoffs with automatic <strong>Follow Call</strong> retuning and returns to scan after silence.</li>
                 </ul>
               </div>
 
               <div class="mini-panel">
                 <h4>Why hackers care</h4>
                 <ul class="feature-list">
-                  <li>Clean C++ architecture with reusable core library plus GUI and CLI frontends.</li>
+                  <li>Clean native architecture with a reusable C++ core plus Linux and Android frontends.</li>
                   <li>Built-in DC spike correction, FFT smoothing, and gap filling for smoother audio.</li>
-                  <li>Fast setup for RF labs, protocol research, and test-bench experiments.</li>
+                  <li>Fast setup for RF labs, protocol research, cordless phone test benches, and SDR experiments.</li>
                 </ul>
               </div>
             </div>
@@ -487,17 +488,17 @@
               <h3>Project facts</h3>
               <div class="panel-body">
                 <ul class="fact-list">
-                  <li><strong>Platform:</strong> Linux</li>
+                  <li><strong>Platforms:</strong> Linux desktop, Android preview app</li>
                   <li><strong>Radio:</strong> HackRF One</li>
                   <li><strong>Language:</strong> C++17 + C</li>
-                  <li><strong>Audio:</strong> PulseAudio playback</li>
-                  <li><strong>GUI stack:</strong> Dear ImGui + SDL2 + OpenGL</li>
+                  <li><strong>Audio:</strong> PulseAudio on Linux, AudioTrack on Android</li>
+                  <li><strong>GUI stack:</strong> Dear ImGui + SDL2 + OpenGL, plus Flutter on Android</li>
                   <li><strong>CLI modes:</strong> Voice follow, wideband monitor, fixed channel scan</li>
                   <li><strong>Region support:</strong> US and EU DECT bands</li>
                 </ul>
 
                 <div class="status-box">
-                  <strong>Bonus:</strong> one-click GUI tuning, keyboard-driven CLI navigation, and automatic return to wideband scan after silence.
+                  <strong>Status:</strong> Linux GUI and CLI are the primary supported path today. The Android app lives in <code>DeDECTive-Android/</code> and is actively being tuned against real hardware.
                 </div>
               </div>
             </div>
@@ -509,7 +510,7 @@
                   DeDECTive is not just a decoder. It is an end-to-end DECT workflow: detect activity, inspect the spectrum, lock onto a voice channel, decode both sides, then follow the call when it hops.
                 </p>
                 <p>
-                  The protocol pipeline was ported and adapted from <a href="https://github.com/pavelyazev/gr-dect2">gr-dect2</a>, then wrapped in a lean native toolchain that is easy to build and quick to run.
+                  The protocol pipeline was ported and adapted from <a href="https://github.com/pavelyazev/gr-dect2">gr-dect2</a>, then wrapped in a lean native toolchain that stays independent of GNU Radio and can be reused by multiple frontends.
                 </p>
               </div>
             </div>
@@ -556,7 +557,7 @@
                 <li>IIR high-pass filtering to tame the HackRF DC spike.</li>
                 <li>Fast-attack / slow-decay FFT smoothing for a cleaner spectrum display.</li>
                 <li>Sequence-gap filling with G.721 comfort noise to reduce clicks.</li>
-                <li>Timeslot tracking across slots 0-11 downlink and 12-23 uplink.</li>
+                <li>Timeslot and part tracking across slots 0-11 downlink and 12-23 uplink.</li>
               </ul>
             </div>
           </div>
@@ -568,7 +569,7 @@
                 <li><code>./build/dedective</code> starts voice-follow mode.</li>
                 <li><code>./build/dedective -e</code> switches to EU band support.</li>
                 <li><code>./build/dedective -W -l</code> opens the text wideband monitor.</li>
-                <li><code>n</code>, <code>p</code>, and <code>q</code> control channel flow from the keyboard.</li>
+                <li><code>n</code>, <code>p</code>, and <code>q</code> control voice-channel flow from the keyboard.</li>
               </ul>
             </div>
           </div>
@@ -580,6 +581,7 @@
                 <li><strong>dedective_core</strong> handles HackRF I/O, packet RX/decoder, wideband monitoring, audio, and codec logic.</li>
                 <li><strong>dedective</strong> is the command-line frontend.</li>
                 <li><strong>dedective_gui</strong> provides the Dear ImGui desktop UI.</li>
+                <li><strong>DeDECTive-Android</strong> is a Flutter app with native FFI/JNI bindings to the same DECT core concepts.</li>
               </ul>
             </div>
           </div>
@@ -589,7 +591,7 @@
           <h2>Quick start download zone</h2>
           <div class="panel-body">
             <p>
-              Build it with CMake, link against <strong>libhackrf</strong>, <strong>libpulse-simple</strong>, <strong>SDL2</strong>, <strong>imgui</strong>, and <strong>OpenGL</strong>, then launch whichever frontend fits your mood.
+              Build the Linux desktop tools with CMake and the usual native dependencies, then drop into the Android app directory if you want the in-progress mobile build.
             </p>
 
             <div class="codebox">cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -608,7 +610,12 @@ cmake --build build -j
 ./build/dedective -W -l
 
 # CLI fixed channel voice decode
-./build/dedective -c 0 -V -l</div>
+./build/dedective -c 0 -V -l
+
+# Android preview app
+cd DeDECTive-Android
+flutter pub get
+flutter build apk --debug</div>
           </div>
         </section>
 
@@ -620,7 +627,7 @@ cmake --build build -j
 
     <div class="footer-strip">Retro landing page transmission complete</div>
     <footer class="footer-card">
-      <div><strong>DeDECTive</strong> :: DECT 6.0 scanner + voice decoder for HackRF One</div>
+      <div><strong>DeDECTive</strong> :: DECT 6.0 scanner + voice decoder for HackRF One on Linux, with an Android preview app in-tree</div>
       <div>Source, screenshots, and build details live at <a href="https://github.com/SarahRoseLives/DeDECTive">github.com/SarahRoseLives/DeDECTive</a></div>
       <div class="counter">0002005</div>
     </footer>
