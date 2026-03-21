@@ -19,6 +19,7 @@
 #include <SDL_opengl.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
@@ -125,14 +126,16 @@ struct CaptureController {
         nb.part_count    = 0;
         nb.phase_diff    = PhaseDiff();
         nb.dc_blocker.reset();
+        nb.mix_first_rx_id = -1;
 
         nb.decoder = std::make_unique<PacketDecoder>(
             // on_update: snapshot parts for GUI
             [this](const PartInfo parts[], int count) {
                 std::lock_guard<std::mutex> lock(nb.mutex);
                 nb.part_count = count;
-                for (int i = 0; i < count; ++i)
+                for (int i = 0; i < count; ++i) {
                     nb.parts[i] = parts[i];
+                }
             },
             // on_voice: mix RFP + PP into one frame before writing to audio.
             // Without mixing, both sides each produce 80 samples per 10 ms
@@ -265,6 +268,94 @@ ImU32 heatmap_color(float t) {
     return ImGui::ColorConvertFloat4ToU32(c);
 }
 
+ImU32 slot_state_color(uint8_t state) {
+    switch (state) {
+    case 1: return IM_COL32(90, 110, 135, 255);
+    case 2: return IM_COL32(90, 170, 255, 255);
+    case 3: return IM_COL32(255, 185, 90, 255);
+    case 4: return IM_COL32(80, 255, 180, 255);
+    case 5: return IM_COL32(255, 110, 110, 255);
+    default: return IM_COL32(18, 22, 30, 255);
+    }
+}
+
+void draw_wideband_slot_grid(const WidebandSnapshot& snapshot, const ImVec2& size) {
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    const ImVec2 top_left = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("wideband_slot_grid", size);
+    const ImVec2 bottom_right(top_left.x + size.x, top_left.y + size.y);
+    draw_list->AddRectFilled(top_left, bottom_right, IM_COL32(10, 12, 18, 255));
+    draw_list->AddRect(top_left, bottom_right, IM_COL32(80, 90, 110, 255));
+
+    if (!snapshot.ready) {
+        draw_list->AddText(ImVec2(top_left.x + 10.0f, top_left.y + 10.0f),
+                           IM_COL32(220, 220, 220, 255),
+                           "Waiting for slot activity...");
+        return;
+    }
+
+    const float left_pad = 34.0f;
+    const float top_pad = 18.0f;
+    const float grid_w = std::max(1.0f, size.x - left_pad);
+    const float grid_h = std::max(1.0f, size.y - top_pad);
+    const float cell_w = grid_w / static_cast<float>(DECT_SLOT_COUNT);
+    const float cell_h = grid_h / static_cast<float>(snapshot.channels.size());
+
+    for (size_t slot = 0; slot < DECT_SLOT_COUNT; ++slot) {
+        if (slot % 4 != 0 && slot != DECT_SLOT_COUNT - 1) continue;
+        char label[8];
+        std::snprintf(label, sizeof(label), "%zu", slot);
+        draw_list->AddText(ImVec2(top_left.x + left_pad + cell_w * static_cast<float>(slot) + 2.0f,
+                                  top_left.y + 2.0f),
+                           IM_COL32(210, 210, 210, 255), label);
+    }
+
+    for (size_t row = 0; row < snapshot.channels.size(); ++row) {
+        const auto& channel = snapshot.channels[row];
+        const float y = top_left.y + top_pad + cell_h * static_cast<float>(row);
+        const ImU32 label_color = channel.voice_detected
+            ? IM_COL32(255, 110, 110, 255)
+            : (channel.active ? IM_COL32(255, 210, 90, 255) : IM_COL32(180, 180, 180, 255));
+        char label[8];
+        std::snprintf(label, sizeof(label), "%d", channel.channel_number);
+        draw_list->AddText(ImVec2(top_left.x + 6.0f, y + 1.0f), label_color, label);
+
+        for (size_t slot = 0; slot < DECT_SLOT_COUNT; ++slot) {
+            const uint8_t state = snapshot.slot_state[row][slot];
+            const ImVec2 p0(top_left.x + left_pad + cell_w * static_cast<float>(slot), y);
+            const ImVec2 p1(p0.x + cell_w - 1.0f, p0.y + cell_h - 1.0f);
+            draw_list->AddRectFilled(p0, p1, slot_state_color(state));
+        }
+    }
+}
+
+void draw_part_summary_card(const char* title,
+                            const PartInfo* part,
+                            const ImVec4& accent,
+                            const ImVec2& size) {
+    ImGui::BeginChild(title, size, true);
+    ImGui::TextColored(accent, "%s", title);
+    ImGui::Separator();
+
+    if (!part) {
+        ImGui::TextDisabled("Not detected");
+        ImGui::EndChild();
+        return;
+    }
+
+    ImGui::Text("Part ID: %s", part->part_id_valid ? part->part_id_hex().c_str() : "---");
+    ImGui::Text("Slot: %u", static_cast<unsigned>(part->slot));
+    ImGui::Text("Qt sync: %s", part->qt_synced ? "YES" : "no");
+    ImGui::Text("Voice: %s", part->voice_present ? "YES" : "no");
+    ImGui::Spacing();
+    ImGui::Text("Decoded: %llu", static_cast<unsigned long long>(part->voice_frames_ok));
+    ImGui::Text("Pkts OK: %llu", static_cast<unsigned long long>(part->packets_ok));
+    ImGui::Text("Bad CRC: %llu", static_cast<unsigned long long>(part->packets_bad_crc));
+    ImGui::Text("XCRC fail: %llu", static_cast<unsigned long long>(part->voice_xcrc_fail));
+    ImGui::Text("Skipped: %llu", static_cast<unsigned long long>(part->voice_skipped));
+    ImGui::EndChild();
+}
+
 void draw_waterfall(const WidebandSnapshot& snapshot,
                     const ImVec2& size,
                     float min_db,
@@ -380,14 +471,18 @@ void draw_fft_plot(const WidebandSnapshot& snapshot,
 
 void draw_channel_details_panel(const WidebandSnapshot& snapshot,
                                 const ImVec2& size,
-                                CaptureController& controller) {
+                                CaptureController& controller,
+                                bool show_title = true) {
     ImGui::BeginChild("channel_details_panel", size, true);
-    ImGui::Text("Channel Details");
-    ImGui::Separator();
+    if (show_title) {
+        ImGui::Text("Channel Details");
+        ImGui::Separator();
+    }
 
     if (ImGui::BeginTable("channel_details_table", 12,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
+                          ImVec2(-1.0f, -1.0f))) {
         ImGui::TableSetupColumn("Ch");
         ImGui::TableSetupColumn("MHz");
         ImGui::TableSetupColumn("Rel dB");
@@ -501,10 +596,28 @@ void draw_narrowband_panel(CaptureController& controller, const ImVec2& size) {
     ImGui::Text("Packets received: %llu", static_cast<unsigned long long>(pkts));
     ImGui::Text("Parts detected: %d", part_count);
     ImGui::Spacing();
+    const PartInfo* rfp_part = nullptr;
+    const PartInfo* pp_part = nullptr;
+    for (int i = 0; i < part_count; ++i) {
+        if (!rfp_part && parts[i].type == PartType::RFP) rfp_part = &parts[i];
+        if (!pp_part && parts[i].type == PartType::PP) pp_part = &parts[i];
+    }
+
+    const float cards_h = 165.0f;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float card_w = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
+    draw_part_summary_card("RFP Summary", rfp_part, ImVec4(0.5f, 0.8f, 1.0f, 1.0f),
+                           ImVec2(card_w, cards_h));
+    ImGui::SameLine();
+    draw_part_summary_card("PP Summary", pp_part, ImVec4(1.0f, 0.8f, 0.5f, 1.0f),
+                           ImVec2(card_w, cards_h));
+
+    ImGui::Spacing();
 
     if (part_count > 0 && ImGui::BeginTable("nb_parts", 10,
             ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
-            ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
+            ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY,
+            ImVec2(-1.0f, 0.0f))) {
         ImGui::TableSetupColumn("Type");
         ImGui::TableSetupColumn("Part ID");
         ImGui::TableSetupColumn("Slot");
@@ -946,12 +1059,12 @@ int main(int argc, char* argv[]) {
             // Narrowband mode: show detailed part info
             draw_narrowband_panel(controller, ImVec2(-1.0f, -1.0f));
         } else {
-            // Wideband mode: FFT + waterfall + channel table
+            // Wideband mode: FFT + waterfall + slots/details
             const float avail_h = ImGui::GetContentRegionAvail().y;
             const float panel_space_h = std::max(360.0f, avail_h - 90.0f);
-            const float fft_h = std::clamp(panel_space_h * 0.20f, 110.0f, 150.0f);
-            const float waterfall_h = std::clamp(panel_space_h * 0.34f, 170.0f, 235.0f);
-            const float details_h = std::max(130.0f, panel_space_h - fft_h - waterfall_h);
+            const float fft_h = std::clamp(panel_space_h * 0.18f, 105.0f, 135.0f);
+            const float waterfall_h = std::clamp(panel_space_h * 0.30f, 155.0f, 210.0f);
+            const float details_h = std::max(180.0f, panel_space_h - fft_h - waterfall_h);
             const float control_w = 56.0f;
 
             ImGui::Text("Wideband FFT");
@@ -984,7 +1097,15 @@ int main(int argc, char* argv[]) {
             ImGui::EndChild();
 
             ImGui::Spacing();
-            draw_channel_details_panel(snapshot, ImVec2(-1.0f, details_h), controller);
+            ImGui::BeginChild("wideband_lower_panel", ImVec2(-1.0f, details_h), true);
+            const float lower_avail_h = ImGui::GetContentRegionAvail().y;
+            const float slot_grid_h = std::clamp(lower_avail_h * 0.34f, 110.0f, 145.0f);
+            ImGui::TextUnformatted("Slots per Channel");
+            draw_wideband_slot_grid(snapshot, ImVec2(ImGui::GetContentRegionAvail().x, slot_grid_h));
+            ImGui::TextUnformatted("Blue/cyan = RFP slots, amber/red = PP slots, bright = voice.");
+            ImGui::Spacing();
+            draw_channel_details_panel(snapshot, ImVec2(-1.0f, -1.0f), controller, false);
+            ImGui::EndChild();
         }
 
         ImGui::EndChild();

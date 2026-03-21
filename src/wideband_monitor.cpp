@@ -52,6 +52,16 @@ float band_power_db(const std::vector<std::complex<float>>& spectrum,
     return 10.0f * std::log10(static_cast<float>(avg_power) + FFT_EPSILON);
 }
 
+uint8_t slot_state_for_part(const PartInfo& part) {
+    if (part.voice_present) {
+        return part.type == PartType::RFP ? 4 : 5;
+    }
+    if (part.qt_synced) {
+        return part.type == PartType::RFP ? 2 : 3;
+    }
+    return 1;
+}
+
 } // namespace
 
 WidebandMonitor::WidebandMonitor()
@@ -71,6 +81,7 @@ WidebandMonitor::WidebandMonitor()
     , fft_plot_db_{}
     , waterfall_history_(WATERFALL_HISTORY * FFT_PLOT_BINS, -120.0f)
     , channel_views_{}
+    , slot_state_{}
     , write_pos_(0)
     , buffered_samples_(0)
     , sample_counter_(0)
@@ -140,6 +151,7 @@ void WidebandMonitor::set_band(DectBand band) {
         packets_seen_[i]   = 0;
         smoothed_power_db_[i] = 0.0f;
         peak_delta_db_[i]     = 0.0f;
+        slot_state_[i].fill(0);
         phase_diff_[i].reset();
     }
 
@@ -244,6 +256,7 @@ void WidebandMonitor::snapshot_channel_state(
         out[i].voice_frames_ok  = channel_views_[i].voice_frames_ok;
         out[i].voice_xcrc_fail  = channel_views_[i].voice_xcrc_fail;
         out[i].voice_skipped    = channel_views_[i].voice_skipped;
+        out[i].slot_state       = slot_state_[i];
     }
 }
 
@@ -253,17 +266,23 @@ void WidebandMonitor::on_channel_update(size_t channel_index,
     bool voice = false;
     bool qt    = false;
     uint64_t vf_ok = 0, vf_fail = 0, vf_skip = 0;
+    std::array<uint8_t, DECT_SLOT_COUNT> slots{};
     for (int i = 0; i < count; ++i) {
         if (parts[i].voice_present) voice = true;
         if (parts[i].qt_synced)     qt    = true;
         vf_ok   += parts[i].voice_frames_ok;
         vf_fail += parts[i].voice_xcrc_fail;
         vf_skip += parts[i].voice_skipped;
+        if (parts[i].slot < DECT_SLOT_COUNT) {
+            slots[parts[i].slot] =
+                std::max(slots[parts[i].slot], slot_state_for_part(parts[i]));
+        }
     }
 
     std::lock_guard<std::mutex> lock(status_mutex_);
     active_parts_[channel_index] = count;
     voice_detected_[channel_index] = voice;
+    slot_state_[channel_index] = slots;
     channel_views_[channel_index].voice_frames_ok  = vf_ok;
     channel_views_[channel_index].voice_xcrc_fail   = vf_fail;
     channel_views_[channel_index].voice_skipped     = vf_skip;
@@ -387,6 +406,7 @@ bool WidebandMonitor::update_visuals() {
             channel_views_[i].voice_frames_ok = channel_state[i].voice_frames_ok;
             channel_views_[i].voice_xcrc_fail = channel_state[i].voice_xcrc_fail;
             channel_views_[i].voice_skipped = channel_state[i].voice_skipped;
+            slot_state_[i] = channel_state[i].slot_state;
 
             // Hysteresis: activate at ≥3 dB above noise, deactivate below 1.5 dB
             bool has_signal = channel_state[i].voice_detected || channel_state[i].active_parts > 0;
@@ -414,6 +434,7 @@ WidebandSnapshot WidebandMonitor::snapshot() const {
     out.channels = channel_views_;
     out.waterfall_rows = WATERFALL_HISTORY;
     out.waterfall_cols = FFT_PLOT_BINS;
+    out.slot_state = slot_state_;
     out.fft_db.assign(fft_plot_db_.begin(), fft_plot_db_.end());
     out.waterfall_db.assign(WATERFALL_HISTORY * FFT_PLOT_BINS, -120.0f);
 

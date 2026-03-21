@@ -18,6 +18,7 @@
 namespace dedective {
 
 inline constexpr uint32_t WIDEBAND_SAMPLE_RATE = 18'432'000;
+inline constexpr size_t DECT_SLOT_COUNT = 24;
 
 struct WidebandChannelView {
     int      channel_number      = -1;
@@ -42,6 +43,7 @@ struct WidebandSnapshot {
     std::vector<float> waterfall_db;
     size_t waterfall_rows = 0;
     size_t waterfall_cols = 0;
+    std::array<std::array<uint8_t, DECT_SLOT_COUNT>, NUM_DECT_CHANNELS> slot_state{};
     std::array<WidebandChannelView, NUM_DECT_CHANNELS> channels{};
 };
 
@@ -81,6 +83,7 @@ private:
         uint64_t voice_frames_ok  = 0;
         uint64_t voice_xcrc_fail  = 0;
         uint64_t voice_skipped    = 0;
+        std::array<uint8_t, DECT_SLOT_COUNT> slot_state{};
     };
 
     std::vector<std::complex<float>> ring_buffer_;
@@ -99,6 +102,7 @@ private:
     std::array<float, FFT_PLOT_BINS> fft_plot_db_;
     std::vector<float> waterfall_history_;
     std::array<WidebandChannelView, NUM_DECT_CHANNELS> channel_views_;
+    std::array<std::array<uint8_t, DECT_SLOT_COUNT>, NUM_DECT_CHANNELS> slot_state_;
     size_t write_pos_;
     size_t buffered_samples_;
     uint64_t sample_counter_;
