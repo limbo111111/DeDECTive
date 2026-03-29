@@ -148,6 +148,17 @@ void WidebandMonitor::configure_band() {
         channel_views_[i].channel_number = ch[i].number;
         channel_views_[i].freq_hz = ch[i].freq_hz;
     }
+
+#if defined(__ANDROID__) && defined(__ARM_NEON)
+    // Pad the unused channels with a stationary NCO (1.0 + 0j)
+    // so SIMD doesn't multiply with garbage and nan values.
+    for (size_t i = NUM_DECT_CHANNELS; i < SIMD_DECT_CHANNELS; ++i) {
+        mixer_[i] = {1.0f, 0.0f};
+        mixer_step_[i] = {1.0f, 0.0f};
+        decim_accum_[i] = {};
+        decim_phase_[i] = 0;
+    }
+#endif
 }
 
 void WidebandMonitor::set_band(DectBand band) {
@@ -225,33 +236,84 @@ void WidebandMonitor::ingest(const std::complex<float>* samples, size_t n) {
 
 void WidebandMonitor::process_sample(std::complex<float> sample) noexcept {
 #if defined(__ANDROID__) && defined(__ARM_NEON)
-    // Mobile optimization: process pairs of channels simultaneously using ARM NEON.
-    // mixer_[i] *= mixer_step_[i];
-    // This reduces the massive overhead of 18.432 Msps * 5 NCO complex multiplications.
-    // For simplicity of this port guide demonstration, we use a basic unrolling
-    // but the full NEON intrinsics implementation for complex math is critical here.
+    // Complex multiplication for 5 channels via ARM NEON SIMD.
+    // mixer_[i] *= mixer_step_[i]
+    // sample * mixer_[i]
 
-    // We unroll the loop to improve branch prediction
-    for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
-        const std::complex<float> mixed = sample * mixer_[i];
+    // We process 2 channels per float32x4_t register.
+    // Since NUM_DECT_CHANNELS = 5, we pad to 6 (3 registers).
+    // Structure: [Re0, Im0, Re1, Im1] in one vector.
 
-        // Fast complex multiplication (equivalent to mixer_[i] *= mixer_step_[i])
-        float a = mixer_[i].real();
-        float b = mixer_[i].imag();
-        float c = mixer_step_[i].real();
-        float d = mixer_step_[i].imag();
-        mixer_[i] = {a * c - b * d, a * d + b * c};
+    // Splat input sample [Re, Im, Re, Im]
+    float tmp_smp[4] = {sample.real(), sample.imag(), sample.real(), sample.imag()};
+    float32x4_t v_sample = vld1q_f32(tmp_smp);
 
-        decim_accum_[i] += mixed;
+    // SIMD_DECT_CHANNELS is padded to be an even multiple (6).
+    // so we can always read 2 complex floats safely.
+    for (size_t i = 0; i < SIMD_DECT_CHANNELS; i += 2) {
+        // Load mixer: [a_re, a_im, b_re, b_im]
+        float32x4_t v_mix = vld1q_f32(reinterpret_cast<const float*>(&mixer_[i]));
+        // Load step: [c_re, c_im, d_re, d_im]
+        float32x4_t v_step = vld1q_f32(reinterpret_cast<const float*>(&mixer_step_[i]));
 
-        if (++decim_phase_[i] == 4) {
-            decim_phase_[i] = 0;
-            const std::complex<float> decimated = decim_accum_[i] * 0.25f;
-            decim_accum_[i] = {};
+        // 1. Calculate mixed = sample * mixer_[i]
+        // mixed_re = smp_re * mix_re - smp_im * mix_im
+        // mixed_im = smp_re * mix_im + smp_im * mix_re
+        // v_sample_swapped = [smp_im, smp_re, smp_im, smp_re]
+        float32x4_t v_smp_swap = vrev64q_f32(v_sample);
 
-            const float phase = phase_diff_[i].process(decimated);
-            receivers_[i]->process_sample(phase);
+        // v_mix_re_re = [mix_re, mix_re, mix_re(1), mix_re(1)]
+        float32x4_t v_mix_re = vtrn1q_f32(v_mix, v_mix);
+        // v_mix_im_im = [mix_im, mix_im, mix_im(1), mix_im(1)]
+        float32x4_t v_mix_im = vtrn2q_f32(v_mix, v_mix);
+
+        // a = smp * mix_re = [smp_re*mix_re, smp_im*mix_re]
+        float32x4_t mixed_a = vmulq_f32(v_sample, v_mix_re);
+        // b = smp_swap * mix_im = [smp_im*mix_im, smp_re*mix_im]
+        float32x4_t mixed_b = vmulq_f32(v_smp_swap, v_mix_im);
+
+        // [-b0, +b1, -b2, +b3]
+        float32x4_t mixed_b_neg = vnegq_f32(mixed_b);
+        uint32x4_t sign_mask = {0x80000000, 0, 0x80000000, 0};
+        mixed_b = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(mixed_b), sign_mask));
+
+        float32x4_t v_mixed = vaddq_f32(mixed_a, mixed_b); // The actual mixed signal
+
+        // 2. Accumulate and decimate
+        float mixed_f[4];
+        vst1q_f32(mixed_f, v_mixed);
+
+        if (i < NUM_DECT_CHANNELS) {
+            decim_accum_[i] += std::complex<float>(mixed_f[0], mixed_f[1]);
+            if (++decim_phase_[i] == 4) {
+                decim_phase_[i] = 0;
+                const float phase = phase_diff_[i].process(decim_accum_[i] * 0.25f);
+                decim_accum_[i] = {};
+                receivers_[i]->process_sample(phase);
+            }
         }
+
+        if (i + 1 < NUM_DECT_CHANNELS) {
+            decim_accum_[i+1] += std::complex<float>(mixed_f[2], mixed_f[3]);
+            if (++decim_phase_[i+1] == 4) {
+                decim_phase_[i+1] = 0;
+                const float phase = phase_diff_[i+1].process(decim_accum_[i+1] * 0.25f);
+                decim_accum_[i+1] = {};
+                receivers_[i+1]->process_sample(phase);
+            }
+        }
+
+        // 3. Update NCO: mixer_[i] *= mixer_step_[i]
+        float32x4_t v_step_re = vtrn1q_f32(v_step, v_step);
+        float32x4_t v_step_im = vtrn2q_f32(v_step, v_step);
+        float32x4_t v_mix_swap = vrev64q_f32(v_mix);
+
+        float32x4_t nco_a = vmulq_f32(v_mix, v_step_re);
+        float32x4_t nco_b = vmulq_f32(v_mix_swap, v_step_im);
+        nco_b = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(nco_b), sign_mask));
+
+        float32x4_t v_next_mix = vaddq_f32(nco_a, nco_b);
+        vst1q_f32(reinterpret_cast<float*>(&mixer_[i]), v_next_mix);
     }
 #else
     for (size_t i = 0; i < NUM_DECT_CHANNELS; ++i) {
@@ -596,10 +658,13 @@ void WidebandMonitor::fft_inplace(std::vector<std::complex<float>>& data) {
 #if defined(__ANDROID__)
 void WidebandMonitor::fft_kiss(std::vector<std::complex<float>>& data) {
     if (!kiss_cfg_) return;
-    std::vector<kiss_fft_cpx> out(FFT_SIZE);
+    // KissFFT's kiss_fft_cpx is typically a struct { float r; float i; },
+    // which has the exact same memory layout as std::complex<float>.
+    // Using reinterpret_cast here avoids unnecessary copying and allocations.
+    std::vector<std::complex<float>> out(FFT_SIZE);
     kiss_fft(static_cast<kiss_fft_cfg>(kiss_cfg_),
              reinterpret_cast<const kiss_fft_cpx*>(data.data()),
-             out.data());
+             reinterpret_cast<kiss_fft_cpx*>(out.data()));
     std::memcpy(data.data(), out.data(), FFT_SIZE * sizeof(std::complex<float>));
 }
 #endif

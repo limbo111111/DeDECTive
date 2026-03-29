@@ -9,9 +9,7 @@ find_library(log-lib log)
 find_library(android-lib android)
 find_library(GLES3-lib GLESv3)
 
-# You will need to build libhackrf with hackrf_open_by_fd, Oboe, SDL2, ImGui, and KissFFT
-# and link them here for the final NDK build.
-# For now, we simulate their inclusion for completeness of the guide.
+# Build dedective_core as a shared library for Android
 add_library(
         dedective_core
         SHARED
@@ -30,10 +28,7 @@ target_link_libraries(
         ${log-lib}
         ${android-lib}
         ${GLES3-lib}
-        # For a real build, you will build these as part of the Android project
-        # and link them here:
-        # SDL2
-        # oboe
-        # hackrf
-        # kiss_fft
+        oboe
+        hackrf
+        kiss_fft
 )
