@@ -4,9 +4,12 @@
 #include <mutex>
 #include <thread>
 
+namespace oboe { class AudioStream; }
+
 namespace dedective {
 
-// Thread-safe audio output via PulseAudio.
+// Thread-safe audio output.
+// Uses Oboe on Android, PulseAudio elsewhere.
 // Accepts 8 kHz 16-bit mono PCM from the DECT voice decoder and plays it.
 class AudioOutput {
 public:
@@ -36,13 +39,19 @@ private:
     std::atomic<size_t> read_pos_{0};
     std::atomic<size_t> write_pos_{0};
 
+#if defined(__ANDROID__)
+    oboe::AudioStream* stream_ = nullptr;
+    int16_t last_sample_ = 0; // for smooth fade on underrun
+    friend class AudioDataCallback;
+#else
     void* pa_handle_ = nullptr;   // pa_simple*
     std::thread thread_;
+    void audio_loop();
+#endif
+
     std::atomic<bool>  running_{false};
     std::atomic<bool>  muted_{false};
     std::atomic<float> volume_{0.8f};
-
-    void audio_loop();
 };
 
 } // namespace dedective

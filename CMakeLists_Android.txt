@@ -1,0 +1,39 @@
+cmake_minimum_required(VERSION 3.18.1)
+
+project("DeDECTive")
+
+set(CMAKE_CXX_STANDARD 17)
+
+# Find Android libraries
+find_library(log-lib log)
+find_library(android-lib android)
+find_library(GLES3-lib GLESv3)
+
+# You will need to build libhackrf with hackrf_open_by_fd, Oboe, SDL2, ImGui, and KissFFT
+# and link them here for the final NDK build.
+# For now, we simulate their inclusion for completeness of the guide.
+add_library(
+        dedective_core
+        SHARED
+        src/android_jni.cpp
+        src/gui_main.cpp
+        src/hackrf_source.cpp
+        src/packet_receiver.cpp
+        src/packet_decoder.cpp
+        src/wideband_monitor.cpp
+        src/audio_output.cpp
+        src/g72x.c
+)
+
+target_link_libraries(
+        dedective_core
+        ${log-lib}
+        ${android-lib}
+        ${GLES3-lib}
+        # For a real build, you will build these as part of the Android project
+        # and link them here:
+        # SDL2
+        # oboe
+        # hackrf
+        # kiss_fft
+)

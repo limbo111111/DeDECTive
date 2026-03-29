@@ -54,6 +54,7 @@ public:
     static constexpr size_t WATERFALL_HISTORY = 160;
 
     WidebandMonitor();
+    ~WidebandMonitor();
 
     // Reconfigure for a different DECT band.  Must be called while
     // capture is stopped (before ingest()).
@@ -139,7 +140,13 @@ private:
     void on_voice_packet(size_t channel_index, int rx_id,
                          const int16_t* pcm, size_t count) noexcept;
 
+#if defined(__ANDROID__)
+    void* kiss_cfg_ = nullptr; // kiss_fft_cfg
+#endif
     static void fft_inplace(std::vector<std::complex<float>>& data);
+#if defined(__ANDROID__)
+    void fft_kiss(std::vector<std::complex<float>>& data);
+#endif
 };
 
 } // namespace dedective
