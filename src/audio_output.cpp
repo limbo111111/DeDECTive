@@ -1,16 +1,119 @@
 #include "audio_output.h"
 
+#if defined(__ANDROID__)
+#include <oboe/Oboe.h>
+#else
 #include <pulse/simple.h>
 #include <pulse/error.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 
 namespace dedective {
 
 AudioOutput::AudioOutput() = default;
 
 AudioOutput::~AudioOutput() { stop(); }
+
+#if defined(__ANDROID__)
+
+class AudioDataCallback : public oboe::AudioStreamDataCallback {
+public:
+    explicit AudioDataCallback(AudioOutput* output) : output_(output) {}
+
+    oboe::DataCallbackResult onAudioReady(oboe::AudioStream* /*oboeStream*/,
+                                          void* audioData,
+                                          int32_t numFrames) override {
+        if (!output_->running_.load(std::memory_order_relaxed)) {
+            std::memset(audioData, 0, static_cast<size_t>(numFrames) * sizeof(int16_t));
+            return oboe::DataCallbackResult::Continue;
+        }
+
+        auto* buf = static_cast<int16_t*>(audioData);
+        size_t rp = output_->read_pos_.load(std::memory_order_relaxed);
+        size_t wp = output_->write_pos_.load(std::memory_order_acquire);
+        size_t avail = wp - rp;
+
+        float vol = output_->muted_.load(std::memory_order_relaxed)
+                  ? 0.0f
+                  : output_->volume_.load(std::memory_order_relaxed);
+
+        size_t frames_to_read = std::min(avail, static_cast<size_t>(numFrames));
+
+        for (size_t i = 0; i < frames_to_read; ++i) {
+            int32_t s = output_->ring_[(rp + i) & AudioOutput::RING_MASK];
+            buf[i] = static_cast<int16_t>(std::clamp(
+                static_cast<int32_t>(s * vol), -32768, 32767));
+        }
+
+        if (frames_to_read > 0) {
+            output_->last_sample_ = buf[frames_to_read - 1];
+            output_->read_pos_.store(rp + frames_to_read, std::memory_order_release);
+        }
+
+        // Fill remaining requested frames (underrun) with a fade out to silence
+        if (frames_to_read < static_cast<size_t>(numFrames)) {
+            size_t remaining = static_cast<size_t>(numFrames) - frames_to_read;
+            for (size_t i = 0; i < remaining; ++i) {
+                float fade = 1.0f - static_cast<float>(i) / static_cast<float>(remaining);
+                buf[frames_to_read + i] = static_cast<int16_t>(output_->last_sample_ * fade);
+            }
+            output_->last_sample_ = 0;
+        }
+
+        return oboe::DataCallbackResult::Continue;
+    }
+
+private:
+    AudioOutput* output_;
+};
+
+bool AudioOutput::start() {
+    if (running_.load()) return true;
+
+    oboe::AudioStreamBuilder builder;
+    builder.setDirection(oboe::Direction::Output)
+           ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+           ->setSharingMode(oboe::SharingMode::Exclusive)
+           ->setFormat(oboe::AudioFormat::I16)
+           ->setChannelCount(oboe::ChannelCount::Mono)
+           ->setSampleRate(8000)
+           ->setDataCallback(new AudioDataCallback(this));
+
+    oboe::Result result = builder.openStream(&stream_);
+    if (result != oboe::Result::OK) {
+        std::fprintf(stderr, "Failed to create Oboe audio stream: %s\n", oboe::convertToText(result));
+        return false;
+    }
+
+    result = stream_->requestStart();
+    if (result != oboe::Result::OK) {
+        std::fprintf(stderr, "Failed to start Oboe audio stream: %s\n", oboe::convertToText(result));
+        stream_->close();
+        delete stream_->getDataCallback();
+        stream_ = nullptr;
+        return false;
+    }
+
+    read_pos_  = 0;
+    write_pos_ = 0;
+    running_   = true;
+    return true;
+}
+
+void AudioOutput::stop() {
+    running_ = false;
+    if (stream_) {
+        stream_->requestStop();
+        stream_->close();
+        delete stream_->getDataCallback();
+        stream_ = nullptr;
+    }
+}
+
+#else
 
 bool AudioOutput::start() {
     if (running_.load()) return true;
@@ -49,6 +152,8 @@ void AudioOutput::stop() {
     }
 }
 
+#endif
+
 void AudioOutput::write_samples(const int16_t* samples, size_t count) {
     if (!running_.load(std::memory_order_relaxed)) return;
 
@@ -68,6 +173,7 @@ void AudioOutput::write_samples(const int16_t* samples, size_t count) {
 void AudioOutput::set_muted(bool m)  { muted_ = m; }
 void AudioOutput::set_volume(float v){ volume_ = std::clamp(v, 0.0f, 1.0f); }
 
+#if !defined(__ANDROID__)
 void AudioOutput::audio_loop() {
     constexpr size_t FRAME = 80;  // one DECT voice frame
     int16_t buf[FRAME];
@@ -104,5 +210,6 @@ void AudioOutput::audio_loop() {
                         buf, sizeof(buf), &error);
     }
 }
+#endif
 
 } // namespace dedective
