@@ -1,4 +1,4 @@
-# DeDECTive
+# DeDECTive.  WIP android port?
 
 > **⚠️ Legal Warning**
 >
