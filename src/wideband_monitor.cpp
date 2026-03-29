@@ -273,7 +273,6 @@ void WidebandMonitor::process_sample(std::complex<float> sample) noexcept {
         float32x4_t mixed_b = vmulq_f32(v_smp_swap, v_mix_im);
 
         // [-b0, +b1, -b2, +b3]
-        float32x4_t mixed_b_neg = vnegq_f32(mixed_b);
         uint32x4_t sign_mask = {0x80000000, 0, 0x80000000, 0};
         mixed_b = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(mixed_b), sign_mask));
 
