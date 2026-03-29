@@ -13,30 +13,27 @@ Android apps running without root privileges cannot directly scan the USB bus an
 5.  Pass this integer file descriptor down to your native C++ code using the JNI function defined in `android_jni.cpp`:
     `public native void setUsbFd(int fd);`
 
-### Patching `libhackrf`
-The standard C `libhackrf` library does not contain a function to accept an already-opened `libusb_device_handle`. Since we must use Android's `UsbManager` file descriptor, we need to inject our handle into the `hackrf_device` structure.
+### Pre-Patched `libhackrf`
+The standard C `libhackrf` library does not natively contain a function to accept an already-opened `libusb_device_handle`. Since we must use Android's `UsbManager` file descriptor, we need a way to inject our handle.
 
-Instead of searching for outdated or buggy Android forks, use the **official `libhackrf` source code** (or add it as a submodule to your NDK build), and simply add the following C function to the very bottom of `src/hackrf.c`:
+To save you from manual patching or relying on outdated third-party forks, the official `libhackrf` C source has been **vendored** directly into the `vendor/libhackrf` directory.
+
+We have already patched `vendor/libhackrf/src/hackrf.c` by adding the following 10-line helper at the bottom:
 
 ```c
-// HackRF Android Port helper:
-// Allows wrapping a pre-opened libusb_device_handle (created from a Java
-// UsbDeviceConnection File Descriptor) into a fully initialized hackrf_device.
-int ADDCALL hackrf_open_by_libusb_handle(libusb_device_handle* handle, hackrf_device** device)
+int ADDCALL hackrf_open_by_fd(int fd, hackrf_device** device)
 {
-	if (handle == NULL || device == NULL) {
-		return HACKRF_ERROR_INVALID_PARAM;
-	}
+	libusb_device_handle* usb_device;
+	if (device == NULL) return HACKRF_ERROR_INVALID_PARAM;
 
-	// Delegate the heavy lifting to the internal, static initialization
-	// function used by hackrf_open() and hackrf_device_list_open()
-	return hackrf_open_setup(handle, device);
+	int result = libusb_wrap_sys_device(g_libusb_context, (intptr_t)fd, &usb_device);
+	if (result != 0 || usb_device == NULL) return HACKRF_ERROR_LIBUSB;
+
+	return hackrf_open_setup(usb_device, device);
 }
 ```
 
-*Note: Because `hackrf_open_setup` is a `static` internal function inside `hackrf.c`, you **must** place this new function inside `hackrf.c`. This guarantees your Android USB File Descriptor initializes the exact same async transfer threads, interface claims, and buffers as a standard desktop Linux USB connection, eliminating any unexpected runtime failures.*
-
-Our modified `hackrf_source.cpp` code handles wrapping the raw Java integer File Descriptor into a valid `libusb_device_handle` (via `libusb_wrap_sys_device()`) and passes it seamlessly to this new function.
+This tiny, mathematically sound patch securely wraps the Android file descriptor using the internal background thread context (`g_libusb_context`) and injects the handle into the heavy, internal `hackrf_open_setup` function. The provided `CMakeLists_Android.txt` automatically compiles this vendored source code into your NDK project, meaning **you do not need to configure or patch `libhackrf` yourself**.
 
 ## 2. DSP Dependencies: KissFFT
 

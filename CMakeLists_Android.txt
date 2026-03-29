@@ -9,6 +9,18 @@ find_library(log-lib log)
 find_library(android-lib android)
 find_library(GLES3-lib GLESv3)
 
+find_package(oboe REQUIRED CONFIG)
+
+# Build the vendored libhackrf as a static library
+add_library(
+        hackrf_android
+        STATIC
+        vendor/libhackrf/src/hackrf.c
+)
+target_include_directories(hackrf_android PUBLIC vendor/libhackrf/src)
+# You will need to link libusb to hackrf_android in your final gradle setup
+# target_link_libraries(hackrf_android PRIVATE usb1.0)
+
 # Build dedective_core as a shared library for Android
 add_library(
         dedective_core
@@ -23,12 +35,16 @@ add_library(
         src/g72x.c
 )
 
+target_include_directories(dedective_core PRIVATE vendor/libhackrf/src)
+
 target_link_libraries(
         dedective_core
         ${log-lib}
         ${android-lib}
         ${GLES3-lib}
-        oboe
-        hackrf
-        kiss_fft
+        hackrf_android
+        # Prefabs provided by Gradle
+        oboe::oboe
+        # kiss_fft
+        # SDL2
 )

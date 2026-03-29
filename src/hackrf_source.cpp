@@ -34,11 +34,9 @@ HackrfSource::~HackrfSource() {
 }
 
 #if defined(__ANDROID__)
-#include <libusb.h>
 extern int g_hackrf_fd; // set via JNI
-// Forward declare the helper function that you MUST add to your libhackrf fork.
-// See documentation on how to add this to `hackrf.c`.
-extern "C" int hackrf_open_by_libusb_handle(libusb_device_handle* handle, hackrf_device** device);
+// Forward declare the helper function injected into the vendored hackrf.c
+extern "C" int hackrf_open_by_fd(int fd, hackrf_device** device);
 #endif
 
 bool HackrfSource::open(unsigned device_index) {
@@ -54,26 +52,12 @@ bool HackrfSource::open(unsigned device_index) {
         return false;
     }
 
-    // Wrap the Android USB File Descriptor into a standard libusb_device_handle
-    libusb_context* ctx = nullptr;
-    libusb_init(&ctx);
-
-    libusb_device_handle* usb_handle = nullptr;
-    int wrap_r = libusb_wrap_sys_device(ctx, (intptr_t)g_hackrf_fd, &usb_handle);
-    if (wrap_r != LIBUSB_SUCCESS || usb_handle == nullptr) {
-        last_error_ = "Failed to wrap Android USB File Descriptor in libusb";
-        libusb_exit(ctx);
-        hackrf_exit();
-        return false;
-    }
-
-    // Pass the standard libusb_device_handle to our custom libhackrf patch
+    // Pass the raw File Descriptor to our custom libhackrf patch which
+    // wraps it using the correct internal libusb_context
     hackrf_device* dev = nullptr;
-    r = hackrf_open_by_libusb_handle(usb_handle, &dev);
+    r = hackrf_open_by_fd(g_hackrf_fd, &dev);
     if (r != HACKRF_SUCCESS) {
         last_error_ = hackrf_error_name(static_cast<hackrf_error>(r));
-        libusb_close(usb_handle);
-        libusb_exit(ctx);
         hackrf_exit();
         return false;
     }
