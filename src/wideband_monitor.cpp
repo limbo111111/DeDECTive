@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring> // For std::memcpy
 
 #if defined(__ANDROID__)
 #include "kiss_fft.h"
@@ -128,7 +129,7 @@ WidebandMonitor::WidebandMonitor()
 
 WidebandMonitor::~WidebandMonitor() {
 #if defined(__ANDROID__)
-    if (kiss_cfg_) kiss_fft_free(kiss_cfg_);
+    if (kiss_cfg_) kiss_fft_free(static_cast<kiss_fft_cfg>(kiss_cfg_));
 #endif
 }
 
