@@ -33,14 +33,6 @@ HackrfSource::~HackrfSource() {
     close();
 }
 
-#if defined(__ANDROID__)
-#include <libusb.h>
-extern int g_hackrf_fd; // set via JNI
-// Forward declare the helper function that you MUST add to your libhackrf fork.
-// See documentation on how to add this to `hackrf.c`.
-extern "C" int hackrf_open_by_libusb_handle(libusb_device_handle* handle, hackrf_device** device);
-#endif
-
 bool HackrfSource::open(unsigned device_index) {
     int r = hackrf_init();
     if (r != HACKRF_SUCCESS) {
@@ -48,37 +40,6 @@ bool HackrfSource::open(unsigned device_index) {
         return false;
     }
 
-#if defined(__ANDROID__)
-    if (g_hackrf_fd < 0) {
-        last_error_ = "HackRF USB File Descriptor not set via Java JNI";
-        return false;
-    }
-
-    // Wrap the Android USB File Descriptor into a standard libusb_device_handle
-    libusb_context* ctx = nullptr;
-    libusb_init(&ctx);
-
-    libusb_device_handle* usb_handle = nullptr;
-    int wrap_r = libusb_wrap_sys_device(ctx, (intptr_t)g_hackrf_fd, &usb_handle);
-    if (wrap_r != LIBUSB_SUCCESS || usb_handle == nullptr) {
-        last_error_ = "Failed to wrap Android USB File Descriptor in libusb";
-        libusb_exit(ctx);
-        hackrf_exit();
-        return false;
-    }
-
-    // Pass the standard libusb_device_handle to our custom libhackrf patch
-    hackrf_device* dev = nullptr;
-    r = hackrf_open_by_libusb_handle(usb_handle, &dev);
-    if (r != HACKRF_SUCCESS) {
-        last_error_ = hackrf_error_name(static_cast<hackrf_error>(r));
-        libusb_close(usb_handle);
-        libusb_exit(ctx);
-        hackrf_exit();
-        return false;
-    }
-    device_ = dev;
-#else
     hackrf_device_list_t* list = hackrf_device_list();
     if (!list || list->devicecount == 0) {
         last_error_ = "No HackRF devices found";
@@ -102,9 +63,8 @@ bool HackrfSource::open(unsigned device_index) {
         hackrf_exit();
         return false;
     }
-    device_ = dev;
-#endif
 
+    device_ = dev;
     last_error_ = "";
     return true;
 }
