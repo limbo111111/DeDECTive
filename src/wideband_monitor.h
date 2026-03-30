@@ -54,7 +54,6 @@ public:
     static constexpr size_t WATERFALL_HISTORY = 160;
 
     WidebandMonitor();
-    ~WidebandMonitor();
 
     // Reconfigure for a different DECT band.  Must be called while
     // capture is stopped (before ingest()).
@@ -87,20 +86,14 @@ private:
         std::array<uint8_t, DECT_SLOT_COUNT> slot_state{};
     };
 
-#if defined(__ANDROID__) && defined(__ARM_NEON)
-    static constexpr size_t SIMD_DECT_CHANNELS = (NUM_DECT_CHANNELS + 1) & ~1; // pad to multiple of 2
-#else
-    static constexpr size_t SIMD_DECT_CHANNELS = NUM_DECT_CHANNELS;
-#endif
-
     std::vector<std::complex<float>> ring_buffer_;
     std::array<float, NUM_DECT_CHANNELS> smoothed_power_db_;
     std::array<float, NUM_DECT_CHANNELS> peak_delta_db_;
-    std::array<PhaseDiff, SIMD_DECT_CHANNELS> phase_diff_;
-    std::array<std::complex<float>, SIMD_DECT_CHANNELS> mixer_;
-    std::array<std::complex<float>, SIMD_DECT_CHANNELS> mixer_step_;
-    std::array<std::complex<float>, SIMD_DECT_CHANNELS> decim_accum_;
-    std::array<int, SIMD_DECT_CHANNELS> decim_phase_;
+    std::array<PhaseDiff, NUM_DECT_CHANNELS> phase_diff_;
+    std::array<std::complex<float>, NUM_DECT_CHANNELS> mixer_;
+    std::array<std::complex<float>, NUM_DECT_CHANNELS> mixer_step_;
+    std::array<std::complex<float>, NUM_DECT_CHANNELS> decim_accum_;
+    std::array<int, NUM_DECT_CHANNELS> decim_phase_;
     std::array<std::unique_ptr<PacketReceiver>, NUM_DECT_CHANNELS> receivers_;
     std::array<std::unique_ptr<PacketDecoder>, NUM_DECT_CHANNELS> decoders_;
     std::array<bool, NUM_DECT_CHANNELS> voice_detected_;
@@ -146,13 +139,7 @@ private:
     void on_voice_packet(size_t channel_index, int rx_id,
                          const int16_t* pcm, size_t count) noexcept;
 
-#if defined(__ANDROID__)
-    void* kiss_cfg_ = nullptr; // kiss_fft_cfg
-#endif
     static void fft_inplace(std::vector<std::complex<float>>& data);
-#if defined(__ANDROID__)
-    void fft_kiss(std::vector<std::complex<float>>& data);
-#endif
 };
 
 } // namespace dedective

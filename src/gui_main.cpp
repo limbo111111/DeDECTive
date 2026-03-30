@@ -753,38 +753,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-#if defined(__ANDROID__)
-    const char* glsl_version = "#version 300 es";
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-#else
     const char* glsl_version = "#version 130";
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
-#if defined(__ANDROID__)
-    SDL_DisplayMode mode;
-    SDL_GetCurrentDisplayMode(0, &mode);
-    SDL_Window* window = SDL_CreateWindow(
-        "DeDECTive GUI",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-        mode.w, mode.h,
-        static_cast<SDL_WindowFlags>(SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI));
-#else
     SDL_Window* window = SDL_CreateWindow(
         "DeDECTive GUI",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1440, 900,
         static_cast<SDL_WindowFlags>(SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI));
-#endif
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -804,18 +786,6 @@ int main(int argc, char* argv[]) {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 8.0f;
     style.FrameRounding = 4.0f;
-
-#if defined(__ANDROID__)
-    // Touch scaling for Android
-    float scale = 2.5f; // Baseline scale
-    float ddpi, hdpi, vdpi;
-    if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) == 0) {
-        // Adjust scale based on screen density (baseline ~160 dpi)
-        scale = std::clamp(ddpi / 100.0f, 1.5f, 4.0f);
-    }
-    io.FontGlobalScale = scale;
-    style.ScaleAllSizes(scale);
-#endif
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -970,173 +940,6 @@ int main(int argc, char* argv[]) {
         }
         ImGui::Separator();
 
-#if defined(__ANDROID__)
-        // ── Navigation Tabs for Mobile layout ───────────────────────
-        static int active_tab = 0; // 0 = Scanner/Decode, 1 = Settings
-
-        if (ImGui::BeginTabBar("MainTabs", ImGuiTabBarFlags_None)) {
-            if (ImGui::BeginTabItem("Monitor")) {
-                active_tab = 0;
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Settings")) {
-                active_tab = 1;
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-
-        ImGui::Separator();
-
-        if (active_tab == 1) { // ── Settings Tab ─────────────────────
-            ImGui::BeginChild("settings_panel", ImVec2(0, 0), false);
-            ImGui::Text("Capture Settings");
-            ImGui::Separator();
-
-            int lna_gain = static_cast<int>(controller.lna_gain);
-            int vga_gain = static_cast<int>(controller.vga_gain);
-            ImGui::BeginDisabled(is_active);
-            if (ImGui::SliderInt("LNA gain", &lna_gain, 0, 40)) {
-                controller.lna_gain = static_cast<uint32_t>(lna_gain);
-            }
-            if (ImGui::SliderInt("VGA gain", &vga_gain, 0, 62)) {
-                controller.vga_gain = static_cast<uint32_t>(vga_gain);
-            }
-            ImGui::Checkbox("HackRF amp", &controller.amp_enable);
-            ImGui::EndDisabled();
-
-            if (ImGui::Checkbox("DC correction", &gui_state.dc_block)) {
-                controller.dc_block_enabled = gui_state.dc_block;
-                controller.monitor.set_dc_block(gui_state.dc_block);
-            }
-
-            ImGui::Spacing();
-            ImGui::BeginDisabled(is_active);
-            {
-                const char* bands[] = { "US Band (1920 MHz)", "EU Band (1880 MHz)" };
-                if (ImGui::Combo("Band", &gui_state.band_index, bands, 2)) {
-                    DectBand new_band = gui_state.band_index == 0 ? DectBand::US : DectBand::EU;
-                    controller.active_band = new_band;
-                    controller.monitor.set_band(new_band);
-                }
-            }
-            ImGui::EndDisabled();
-
-            if (!is_active) {
-                if (ImGui::Button("Start wideband scan", ImVec2(-1.0f, 0.0f))) {
-                    controller.start_wideband();
-                    active_tab = 0; // jump back to monitor
-                }
-            } else {
-                if (ImGui::Button("Stop capture", ImVec2(-1.0f, 0.0f))) {
-                    controller.stop();
-                }
-            }
-
-            ImGui::Spacing();
-            ImGui::Text("Status");
-            if (is_narrowband) {
-                ImGui::BulletText("Mode: NARROWBAND");
-                ImGui::BulletText("Channel: %d", dect_channels(controller.active_band)[controller.nb.channel_index].number);
-            } else if (is_wideband) {
-                ImGui::BulletText("Mode: WIDEBAND");
-                ImGui::BulletText("FFT buffer: %zu / %zu",
-                                  snapshot.buffered_samples, WidebandMonitor::FFT_SIZE);
-                ImGui::BulletText("Noise floor: %.1f dB", snapshot.noise_floor_db);
-            } else {
-                ImGui::BulletText("Mode: idle");
-            }
-
-            if (!controller.last_error.empty()) {
-                ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Last error");
-                ImGui::TextWrapped("%s", controller.last_error.c_str());
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Text("Audio Output");
-            ImGui::Separator();
-
-            if (ImGui::Checkbox("Enable audio", &gui_state.audio_enabled)) {
-                if (is_narrowband) {
-                    if (gui_state.audio_enabled) controller.start_audio();
-                    else controller.audio.stop();
-                }
-            }
-
-            if (ImGui::Checkbox("Mute", &gui_state.audio_muted)) {
-                controller.audio.set_muted(gui_state.audio_muted);
-            }
-
-            if (ImGui::SliderFloat("Volume", &gui_state.audio_volume, 0.0f, 1.0f, "%.2f")) {
-                controller.audio.set_volume(gui_state.audio_volume);
-            }
-            ImGui::BulletText("Audio: %s",
-                              controller.audio.is_running() ? "playing" : "stopped");
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Text("Call Following");
-            ImGui::Separator();
-            ImGui::Checkbox("Follow call", &gui_state.follow_call);
-            if (gui_state.follow_call) {
-                ImGui::TextWrapped("Auto-retunes when the call "
-                                   "moves to a different channel.");
-            }
-
-            ImGui::EndChild();
-        } else if (active_tab == 0) { // ── Monitor Tab ─────────────────────
-            ImGui::BeginChild("main_visuals", ImVec2(0, 0), false);
-
-            if (is_narrowband) {
-                draw_narrowband_panel(controller, ImVec2(-1.0f, -1.0f));
-            } else {
-                // Mobile layout adjusts heights to be responsive
-                const float avail_h = ImGui::GetContentRegionAvail().y;
-                const float fft_h = std::clamp(avail_h * 0.20f, 100.0f, 200.0f);
-                const float waterfall_h = std::clamp(avail_h * 0.35f, 150.0f, 300.0f);
-                const float details_h = std::max(100.0f, avail_h - fft_h - waterfall_h - 20.0f);
-                const float control_w = 40.0f * ImGui::GetIO().FontGlobalScale; // wider for mobile
-
-                ImGui::Text("Wideband FFT");
-                ImGui::BeginChild("fft_panel", ImVec2(-1.0f, fft_h + 8.0f), true);
-                draw_fft_plot(snapshot,
-                              ImVec2(ImGui::GetContentRegionAvail().x - control_w - ImGui::GetStyle().ItemSpacing.x,
-                                     fft_h),
-                              gui_state.fft_min_db,
-                              gui_state.fft_max_db,
-                              controller.monitor.center_freq());
-                ImGui::SameLine();
-                draw_vertical_range_controls("min", "max",
-                                             &gui_state.fft_min_db, &gui_state.fft_max_db,
-                                             -140.0f, 40.0f, 5.0f);
-                ImGui::EndChild();
-
-                ImGui::Spacing();
-                ImGui::Text("Waterfall");
-                ImGui::BeginChild("waterfall_panel", ImVec2(-1.0f, waterfall_h + 8.0f), true);
-                draw_waterfall(snapshot,
-                               ImVec2(ImGui::GetContentRegionAvail().x - control_w - ImGui::GetStyle().ItemSpacing.x,
-                                      waterfall_h),
-                               gui_state.waterfall_min_db,
-                               gui_state.waterfall_max_db,
-                               controller.monitor.center_freq());
-                ImGui::SameLine();
-                draw_vertical_range_controls("min", "max",
-                                             &gui_state.waterfall_min_db, &gui_state.waterfall_max_db,
-                                             -140.0f, 40.0f, 5.0f);
-                ImGui::EndChild();
-
-                ImGui::Spacing();
-                ImGui::BeginChild("wideband_lower_panel", ImVec2(-1.0f, details_h), true);
-                draw_channel_details_panel(snapshot, ImVec2(-1.0f, -1.0f), controller, true);
-                ImGui::EndChild();
-            }
-
-            ImGui::EndChild();
-        }
-#else
         const float left_w = 270.0f;
         const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const float center_w = std::max(500.0f, ImGui::GetContentRegionAvail().x - left_w - spacing);
@@ -1246,7 +1049,6 @@ int main(int argc, char* argv[]) {
         }
 
         ImGui::EndChild();
-#endif
 
         ImGui::SameLine();
 
