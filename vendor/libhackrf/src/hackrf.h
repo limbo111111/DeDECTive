@@ -2396,16 +2396,6 @@ extern ADDAPI int ADDCALL hackrf_radio_write_register(
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Allows wrapping a pre-opened libusb_device_handle (created from a Java
-// UsbDeviceConnection File Descriptor) into a fully initialized hackrf_device.
-
-#ifdef __cplusplus
-}
-#endif
-// --- DeDECTive Android Helper ---
-#ifdef __cplusplus
-extern "C" {
-#endif
 // Allows wrapping a raw Android UsbDeviceConnection File Descriptor into a fully initialized hackrf_device.
 extern ADDAPI int ADDCALL hackrf_open_by_fd(int fd, hackrf_device** device);
 #ifdef __cplusplus

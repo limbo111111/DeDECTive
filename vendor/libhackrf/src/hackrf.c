@@ -3553,19 +3553,6 @@ int ADDCALL hackrf_radio_write_register(
 #endif
 
 // --- DeDECTive Android Helper ---
-// Allows wrapping a pre-opened libusb_device_handle (created from a Java
-// UsbDeviceConnection File Descriptor) into a fully initialized hackrf_device.
-
-{
-	if (handle == NULL || device == NULL) {
-		return HACKRF_ERROR_INVALID_PARAM;
-	}
-
-	// Delegate the heavy lifting to the internal, static initialization
-	// function used by hackrf_open() and hackrf_device_list_open()
-	return hackrf_open_setup(handle, device);
-}
-// --- DeDECTive Android Helper ---
 // Wraps a raw Android UsbDeviceConnection File Descriptor using the internal libhackrf context
 // to ensure async USB events are correctly processed by the hackrf_transfer_thread.
 int ADDCALL hackrf_open_by_fd(int fd, hackrf_device** device)
