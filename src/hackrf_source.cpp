@@ -33,6 +33,12 @@ HackrfSource::~HackrfSource() {
     close();
 }
 
+#if defined(__ANDROID__)
+extern int g_hackrf_fd; // set via JNI
+// Forward declare the helper function injected into the vendored hackrf.c
+extern "C" int hackrf_open_by_fd(int fd, hackrf_device** device);
+#endif
+
 bool HackrfSource::open(unsigned device_index) {
     int r = hackrf_init();
     if (r != HACKRF_SUCCESS) {
@@ -40,6 +46,23 @@ bool HackrfSource::open(unsigned device_index) {
         return false;
     }
 
+#if defined(__ANDROID__)
+    if (g_hackrf_fd < 0) {
+        last_error_ = "HackRF USB File Descriptor not set via Java JNI";
+        return false;
+    }
+
+    // Pass the raw File Descriptor to our custom libhackrf patch which
+    // wraps it using the correct internal libusb_context
+    hackrf_device* dev = nullptr;
+    r = hackrf_open_by_fd(g_hackrf_fd, &dev);
+    if (r != HACKRF_SUCCESS) {
+        last_error_ = hackrf_error_name(static_cast<hackrf_error>(r));
+        hackrf_exit();
+        return false;
+    }
+    device_ = dev;
+#else
     hackrf_device_list_t* list = hackrf_device_list();
     if (!list || list->devicecount == 0) {
         last_error_ = "No HackRF devices found";
@@ -63,8 +86,9 @@ bool HackrfSource::open(unsigned device_index) {
         hackrf_exit();
         return false;
     }
-
     device_ = dev;
+#endif
+
     last_error_ = "";
     return true;
 }
